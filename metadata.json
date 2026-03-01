@@ -1,5 +1,5 @@
 {
-  "name": "Une Last-Mile",
+  "name": "Sintese Last-Mile",
   "description": "Sistema de gestão de last-mile para telecomunicações, focado em controle de parceiros, custos e atendimento ao cliente final em todo o Brasil.",
   "requestFramePermissions": [
     "geolocation"

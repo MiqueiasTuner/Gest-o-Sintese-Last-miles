@@ -22,7 +22,9 @@ import {
   MoreVertical,
   Wallet,
   CreditCard,
-  Receipt
+  Receipt,
+  Menu,
+  X
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -173,6 +175,7 @@ export default function App() {
   const [newPoint, setNewPoint] = useState({ customer_name: '', address: '', city: '', state: '', partner_id: '', cost: 0, status: 'pending' as const });
   const [partnerFilter, setPartnerFilter] = useState<'active' | 'cancelled'>('active');
   const [pointFilter, setPointFilter] = useState<'active' | 'cancelled'>('active');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -309,8 +312,31 @@ export default function App() {
     try {
       await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
     } catch (error: any) {
-      console.error(error);
-      setLoginError("Credenciais inválidas ou erro de conexão.");
+      console.error("Firebase Auth Error:", error.code, error.message);
+      
+      // Mapeamento de erros comuns do Firebase para mensagens amigáveis
+      switch (error.code) {
+        case 'auth/invalid-credential':
+          setLoginError("E-mail ou senha incorretos. Verifique suas credenciais.");
+          break;
+        case 'auth/user-not-found':
+          setLoginError("Usuário não encontrado. Verifique o e-mail informado.");
+          break;
+        case 'auth/wrong-password':
+          setLoginError("Senha incorreta. Tente novamente.");
+          break;
+        case 'auth/too-many-requests':
+          setLoginError("Muitas tentativas malsucedidas. Tente novamente mais tarde.");
+          break;
+        case 'auth/network-request-failed':
+          setLoginError("Erro de conexão. Verifique sua internet.");
+          break;
+        case 'auth/invalid-email':
+          setLoginError("Formato de e-mail inválido.");
+          break;
+        default:
+          setLoginError("Erro ao acessar o painel. Verifique se o e-mail e senha estão corretos.");
+      }
     }
   };
 
@@ -577,13 +603,13 @@ export default function App() {
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-900/80 backdrop-blur-xl p-8 rounded-[2.5rem] shadow-2xl w-full max-w-md border border-slate-800 relative z-10"
+          className="bg-slate-900/80 backdrop-blur-xl p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl w-full max-w-md border border-slate-800 relative z-10"
         >
           <div className="flex flex-col items-center mb-10">
             <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 mb-6 rotate-3">
               <TrendingUp size={40} />
             </div>
-            <h1 className="text-3xl font-black text-white tracking-tight">Une Last-Mile</h1>
+            <h1 className="text-3xl font-black text-white tracking-tight uppercase">Sintese</h1>
             <p className="text-slate-400 text-center mt-3 font-medium">Gestão Premium de Telecomunicações</p>
           </div>
 
@@ -594,7 +620,7 @@ export default function App() {
                 type="email"
                 required
                 className="w-full px-5 py-4 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-600"
-                placeholder="admin@une.com"
+                placeholder="admin@sintese.com"
                 value={loginEmail}
                 onChange={e => setLoginEmail(e.target.value)}
               />
@@ -639,9 +665,41 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-200 font-sans selection:bg-indigo-500/30">
+    <div className="flex flex-col lg:flex-row h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-indigo-500/30">
+      {/* Mobile Header */}
+      <header className="lg:hidden flex items-center justify-between p-4 bg-slate-900 border-b border-slate-800 z-50">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
+            <TrendingUp size={24} />
+          </div>
+          <h1 className="text-lg font-black tracking-tight text-white uppercase">Sintese</h1>
+        </div>
+        <button 
+          onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+          className="p-2 text-slate-400 hover:text-white transition-colors"
+        >
+          {isSidebarOpen ? <X size={24} /> : <Menu size={24} />}
+        </button>
+      </header>
+
+      {/* Sidebar Overlay */}
+      <AnimatePresence>
+        {isSidebarOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsSidebarOpen(false)}
+            className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[60] lg:hidden"
+          />
+        )}
+      </AnimatePresence>
+
       {/* Sidebar */}
-      <aside className="w-72 bg-slate-950 border-r border-slate-800/50 flex flex-col p-8 relative z-20">
+      <aside className={cn(
+        "fixed inset-y-0 left-0 w-72 bg-slate-900 border-r border-slate-800 p-8 flex flex-col z-[70] transition-transform duration-500 lg:relative lg:translate-x-0",
+        isSidebarOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
         {/* Toast Notification */}
         <AnimatePresence>
           {toast && (
@@ -650,7 +708,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0, x: '-50%' }}
               exit={{ opacity: 0, y: -20, x: '-50%' }}
               className={cn(
-                "fixed top-8 left-1/2 z-[100] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 font-bold text-sm backdrop-blur-md border",
+                "fixed top-8 left-1/2 z-[100] px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-3 font-bold text-sm backdrop-blur-md border w-[90%] max-w-sm",
                 toast.type === 'success' ? "bg-emerald-500/90 text-white border-emerald-400/20" : "bg-rose-500/90 text-white border-rose-400/20"
               )}
             >
@@ -665,7 +723,7 @@ export default function App() {
             <TrendingUp size={28} />
           </div>
           <div>
-            <h1 className="text-xl font-black tracking-tight text-white">Une</h1>
+            <h1 className="text-xl font-black tracking-tight text-white uppercase">Sintese</h1>
             <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Last-Mile</p>
           </div>
         </div>
@@ -675,31 +733,31 @@ export default function App() {
             icon={LayoutDashboard} 
             label="Dashboard" 
             active={activeTab === 'dashboard'} 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
             icon={Users} 
             label="Parceiros" 
             active={activeTab === 'partners'} 
-            onClick={() => setActiveTab('partners')} 
+            onClick={() => { setActiveTab('partners'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
             icon={MapPin} 
             label="Pontos / Clientes" 
             active={activeTab === 'points'} 
-            onClick={() => setActiveTab('points')} 
+            onClick={() => { setActiveTab('points'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
             icon={BarChart3} 
             label="Relatórios" 
             active={activeTab === 'reports'} 
-            onClick={() => setActiveTab('reports')} 
+            onClick={() => { setActiveTab('reports'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
             icon={Wallet} 
             label="Financeiro" 
             active={activeTab === 'finance'} 
-            onClick={() => setActiveTab('finance')} 
+            onClick={() => { setActiveTab('finance'); setIsSidebarOpen(false); }} 
           />
         </nav>
 
@@ -721,22 +779,22 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-y-auto p-10 relative">
+      <main className="flex-1 overflow-y-auto p-4 lg:p-10 relative">
         {/* Background Glow */}
         <div className="absolute top-0 right-0 w-1/2 h-1/2 bg-indigo-600/5 rounded-full blur-[120px] pointer-events-none"></div>
 
-        <header className="flex justify-between items-end mb-12 relative z-10">
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12 relative z-10">
           <div>
             <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-widest mb-2">
               <ChevronRight size={14} />
               <span>Sistema de Gestão</span>
             </div>
-            <h2 className="text-4xl font-black text-white capitalize tracking-tight">
+            <h2 className="text-3xl lg:text-4xl font-black text-white capitalize tracking-tight">
               {activeTab === 'reports' ? 'Relatórios' : activeTab === 'finance' ? 'Financeiro' : activeTab}
             </h2>
           </div>
 
-            <div className="flex gap-4">
+            <div className="flex flex-wrap gap-4 w-full md:w-auto">
               {(dateRange.start || dateRange.end) && (
                 <button 
                   onClick={() => setDateRange({ start: '', end: '' })}
@@ -747,30 +805,31 @@ export default function App() {
               )}
               {activeTab !== 'dashboard' && activeTab !== 'reports' && (
               <>
-                <div className="relative group">
+                <div className="relative group flex-1 md:flex-none">
                   <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-indigo-400 transition-colors" size={18} />
                   <input 
                     type="text"
-                    placeholder="Pesquisar registros..."
-                    className="pl-12 pr-6 py-3 bg-slate-900/50 border border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 w-80 transition-all text-sm placeholder:text-slate-600"
+                    placeholder="Pesquisar..."
+                    className="pl-12 pr-6 py-3 bg-slate-900/50 border border-slate-800 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-500 w-full md:w-64 lg:w-80 transition-all text-sm placeholder:text-slate-600"
                     value={searchTerm}
                     onChange={e => setSearchTerm(e.target.value)}
                   />
                 </div>
                 <button 
                   onClick={() => activeTab === 'partners' ? setShowPartnerModal(true) : setShowPointModal(true)}
-                  className="flex items-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/20 active:scale-95"
+                  className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-6 py-3 rounded-2xl font-bold hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/20 active:scale-95 flex-1 md:flex-none"
                 >
                   <Plus size={20} />
-                  <span>Novo {activeTab === 'partners' ? 'Parceiro' : 'Ponto'}</span>
+                  <span className="hidden sm:inline">Novo {activeTab === 'partners' ? 'Parceiro' : 'Ponto'}</span>
+                  <span className="sm:hidden">Novo</span>
                 </button>
                 {activeTab === 'points' && (
                   <button 
                     onClick={exportToCSV}
-                    className="flex items-center gap-2 bg-slate-800 text-slate-200 px-6 py-3 rounded-2xl font-bold hover:bg-slate-700 transition-all border border-slate-700"
+                    className="flex items-center justify-center gap-2 bg-slate-800 text-slate-200 px-6 py-3 rounded-2xl font-bold hover:bg-slate-700 transition-all border border-slate-700 flex-1 md:flex-none"
                   >
                     <ArrowDownCircle size={20} className="rotate-180" />
-                    <span>Exportar CSV</span>
+                    <span className="hidden sm:inline">Exportar CSV</span>
                   </button>
                 )}
               </>
@@ -788,7 +847,7 @@ export default function App() {
               className="space-y-10 relative z-10"
             >
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
                 <StatCard 
                   label="Parceiros Ativos" 
                   value={stats.totalPartners} 
@@ -825,7 +884,7 @@ export default function App() {
               </div>
 
               {/* Charts Section */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
                 <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
                   <h3 className="text-xl font-bold text-white mb-8">Pontos por Estado</h3>
                   <div className="h-80">
@@ -1143,7 +1202,7 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-10 relative z-10"
             >
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
                   <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Total Pendente</p>
                   <p className="text-3xl font-black text-amber-400">
@@ -1165,7 +1224,7 @@ export default function App() {
               </div>
 
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                <div className="p-8 border-b border-slate-800 flex justify-between items-center">
+                <div className="p-8 border-b border-slate-800 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
                     <h3 className="text-xl font-bold text-white">Conciliação de Pagamentos</h3>
                     <p className="text-sm text-slate-500 mt-1">Gerencie o status financeiro de cada entrega concluída.</p>
@@ -1258,10 +1317,11 @@ export default function App() {
                 </button>
               </div>
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-800/50 border-b border-slate-800">
-                    <tr>
-                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Empresa</th>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50 border-b border-slate-800">
+                      <tr>
+                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Empresa</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Contato</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Localização</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Status</th>
@@ -1350,8 +1410,9 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            </motion.div>
-          )}
+            </div>
+          </motion.div>
+        )}
 
           {activeTab === 'points' && (
             <motion.div 
@@ -1382,10 +1443,11 @@ export default function App() {
                 </button>
               </div>
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                <table className="w-full text-left">
-                  <thead className="bg-slate-800/50 border-b border-slate-800">
-                    <tr>
-                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Cliente Final</th>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-800/50 border-b border-slate-800">
+                      <tr>
+                        <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Cliente Final</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Endereço</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Parceiro</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Custo</th>
@@ -1463,8 +1525,9 @@ export default function App() {
                   </tbody>
                 </table>
               </div>
-            </motion.div>
-          )}
+            </div>
+          </motion.div>
+        )}
         </AnimatePresence>
       </main>
 
@@ -1481,7 +1544,7 @@ export default function App() {
               initial={{ scale: 0.9, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-slate-900 border border-slate-800 rounded-[2.5rem] p-10 w-full max-w-lg shadow-2xl relative overflow-hidden"
+              className="bg-slate-900 border border-slate-800 rounded-[2rem] lg:rounded-[2.5rem] p-6 lg:p-10 w-full max-w-lg shadow-2xl relative overflow-hidden max-h-[90vh] overflow-y-auto"
             >
               {/* Modal Header Glow */}
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500"></div>

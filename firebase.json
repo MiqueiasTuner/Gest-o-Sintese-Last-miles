@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "public": "MiqueiasTuner/gest-o-Sintese-Last-miles",
+    "public": "dist",
     "ignore": [
       "firebase.json",
       "**/.*",
