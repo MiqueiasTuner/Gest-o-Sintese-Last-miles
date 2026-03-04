@@ -33,7 +33,10 @@ import {
   Shield,
   Cpu,
   Layers,
-  AlertTriangle
+  AlertTriangle,
+  Handshake,
+  User,
+  Lock
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { 
@@ -80,9 +83,10 @@ interface Partner {
   name: string;
   contact: string;
   state: string;
-  city: string;
+  cities: string;
   logo_url?: string;
   status: 'active' | 'cancelled';
+  sla_incidents?: number;
   created_at: any;
 }
 
@@ -111,14 +115,44 @@ interface MonthlyStat {
 
 // --- Components ---
 
+const PartnerLogo = ({ name, url, size = "md" }: { name: string, url?: string, size?: "sm" | "md" | "lg" }) => {
+  const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const sizes = {
+    sm: "w-8 h-8 text-[10px]",
+    md: "w-12 h-12 text-sm",
+    lg: "w-16 h-16 text-xl"
+  };
+
+  if (url && url.trim() !== '') {
+    return (
+      <div className={cn("rounded-xl overflow-hidden border border-white/10 bg-slate-800 flex items-center justify-center shrink-0", sizes[size])}>
+        <img src={url} alt={name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={cn("rounded-xl border border-white/10 bg-gradient-to-br from-slate-800 to-slate-900 flex flex-col items-center justify-center text-white font-black relative overflow-hidden group shrink-0 shadow-inner", sizes[size])}>
+      <div className="absolute inset-0 bg-indigo-500/10 opacity-50" />
+      <div className="relative z-10 flex flex-col items-center justify-center">
+        <div className="relative">
+          <Users size={size === "sm" ? 14 : size === "md" ? 20 : 28} className="text-indigo-400/60" />
+          <Handshake size={size === "sm" ? 10 : size === "md" ? 14 : 20} className="absolute -bottom-1 -right-1 text-indigo-400" />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const BrazilMap = () => {
   return (
-    <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden h-[400px] group">
+    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden h-[400px] group transition-all duration-500 hover:border-white/20">
+      <div className="absolute -right-20 -top-20 w-64 h-64 bg-emerald-500/10 rounded-full blur-3xl opacity-20 group-hover:opacity-30 transition-opacity duration-500" />
       <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
         <Globe size={120} />
       </div>
       <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3 relative z-10">
-        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 border border-emerald-500/20">
           <MapIcon size={20} />
         </div>
         Cobertura de Rede Nacional
@@ -144,12 +178,13 @@ const BrazilMap = () => {
 
 const NetworkTopology = () => {
   return (
-    <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden h-[400px] group">
+    <div className="bg-white/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden h-[400px] group transition-all duration-500 hover:border-white/20">
+      <div className="absolute -left-20 -bottom-20 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl opacity-20 group-hover:opacity-30 transition-opacity duration-500" />
       <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
         <Network size={120} />
       </div>
       <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3 relative z-10">
-        <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+        <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400 border border-indigo-500/20">
           <Activity size={20} />
         </div>
         Topologia de Rede Ativa
@@ -195,21 +230,21 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
   <button
     onClick={onClick}
     className={cn(
-      "flex items-center w-full gap-3 px-4 py-3 rounded-xl transition-all duration-300 group relative overflow-hidden",
+      "flex items-center w-full gap-3 px-4 py-3 rounded-2xl transition-all duration-500 group relative overflow-hidden",
       active 
-        ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" 
-        : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
+        ? "bg-white/10 text-white shadow-2xl shadow-indigo-500/20 border border-white/10 backdrop-blur-md" 
+        : "text-slate-400 hover:bg-white/5 hover:text-slate-100 border border-transparent hover:border-white/5"
     )}
   >
     {active && (
       <motion.div 
         layoutId="active-pill"
-        className="absolute left-0 w-1 h-6 bg-white/40 rounded-r-full"
+        className="absolute left-0 w-1.5 h-6 bg-indigo-500 rounded-r-full shadow-[0_0_15px_rgba(99,102,241,0.5)]"
       />
     )}
     <div className="relative z-10 flex items-center gap-3">
-      <Icon size={18} className={cn("transition-transform duration-300", active ? "scale-110" : "group-hover:scale-110")} />
-      <span className="font-bold text-[10px] uppercase tracking-[0.15em]">{label}</span>
+      <Icon size={18} className={cn("transition-all duration-500", active ? "scale-110 text-indigo-400" : "group-hover:scale-110 group-hover:text-slate-200")} />
+      <span className="font-black text-[10px] uppercase tracking-[0.2em]">{label}</span>
     </div>
     {active && (
       <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-40">
@@ -225,29 +260,34 @@ const StatCard = ({ label, value, icon: Icon, trend, color }: { label: string, v
   
   return (
     <motion.div 
-      whileHover={{ y: -4 }}
-      className="bg-slate-900/50 backdrop-blur-sm p-6 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden group"
+      whileHover={{ y: -4, scale: 1.02 }}
+      className="bg-white/5 backdrop-blur-xl p-6 rounded-[2rem] border border-white/10 shadow-2xl relative overflow-hidden group transition-all duration-500"
     >
-      <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
-        <Cpu size={40} />
-      </div>
-      <div className="flex justify-between items-start mb-4 relative z-10">
-        <div className={cn("p-3 rounded-xl bg-opacity-20", color.replace('bg-', 'bg-opacity-20 text-'))}>
-          <Icon size={24} className={cn("text-opacity-100", color.replace('bg-', 'text-'))} />
+      {/* Liquid Glass Background Effect */}
+      <div className={cn(
+        "absolute -right-8 -top-8 w-32 h-32 rounded-full blur-3xl opacity-10 group-hover:opacity-20 transition-opacity duration-500",
+        color.replace('bg-', 'bg-')
+      )} />
+      
+      <div className="flex justify-between items-start mb-6 relative z-10">
+        <div className={cn("p-4 rounded-2xl bg-white/5 border border-white/10 shadow-inner", color.replace('bg-', 'text-'))}>
+          <Icon size={24} />
         </div>
         {trend && (
           <span className={cn(
-            "text-xs font-bold px-2 py-1 rounded-full",
-            isPositive ? "text-emerald-400 bg-emerald-400/10" : 
-            isNegative ? "text-rose-400 bg-rose-400/10" : 
-            "text-slate-400 bg-slate-400/10"
+            "text-[10px] font-black px-3 py-1 rounded-full tracking-wider uppercase border",
+            isPositive ? "text-emerald-400 bg-emerald-400/10 border-emerald-400/20" : 
+            isNegative ? "text-rose-400 bg-rose-400/10 border-rose-400/20" : 
+            "text-slate-400 bg-slate-400/10 border-slate-400/20"
           )}>
             {trend}
           </span>
         )}
       </div>
-      <h3 className="text-slate-400 text-sm font-medium mb-1">{label}</h3>
-      <p className="text-2xl font-bold text-white tracking-tight">{value}</p>
+      <div className="relative z-10">
+        <h3 className="text-slate-400 text-[10px] font-black uppercase tracking-[0.2em] mb-2">{label}</h3>
+        <p className="text-3xl font-bold text-white tracking-tighter">{value}</p>
+      </div>
     </motion.div>
   );
 };
@@ -275,7 +315,7 @@ export default function App() {
   const [showReductionModal, setShowReductionModal] = useState<{id: string, currentCost: number} | null>(null);
   const [reductionValue, setReductionValue] = useState(0);
   
-  const [newPartner, setNewPartner] = useState({ name: '', contact: '', state: '', city: '', logo_url: '' });
+  const [newPartner, setNewPartner] = useState({ name: '', contact: '', state: '', cities: '', logo_url: '' });
   const [newPoint, setNewPoint] = useState({ 
     customer_name: '', 
     address: '', 
@@ -421,6 +461,22 @@ export default function App() {
     });
   }, [points, dateRange]);
 
+  const handleReportIncident = async (partnerId: string) => {
+    try {
+      const partner = partners.find(p => p.id === partnerId);
+      if (!partner) return;
+      
+      const newIncidents = (partner.sla_incidents || 0) + 1;
+      await updateDoc(doc(db, 'partners', partnerId), {
+        sla_incidents: newIncidents
+      });
+      
+      setPartners(partners.map(p => p.id === partnerId ? { ...p, sla_incidents: newIncidents } : p));
+    } catch (error) {
+      console.error("Erro ao registrar incidente:", error);
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError('');
@@ -458,7 +514,7 @@ export default function App() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDownloadTemplate = () => {
-    const csvContent = "nome,contato,estado,cidade,logo_url\nExemplo Empresa,João Silva,SP,São Paulo,https://exemplo.com/logo.png";
+    const csvContent = "nome,contato,estado,cidades,logo_url\nExemplo Empresa,João Silva,SP,\"São Paulo, Campinas\",https://exemplo.com/logo.png";
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -492,7 +548,7 @@ export default function App() {
               name: row.nome || row.name || '',
               contact: row.contato || row.contact || '',
               state: row.estado || row.state || '',
-              city: row.cidade || row.city || '',
+              cities: row.cidades || row.cities || row.cidade || row.city || '',
               logo_url: row.logo_url || '',
               status: 'active',
               created_at: Timestamp.now()
@@ -528,7 +584,7 @@ export default function App() {
       });
       setToast({ message: 'Parceiro cadastrado com sucesso!', type: 'success' });
       setShowPartnerModal(false);
-      setNewPartner({ name: '', contact: '', state: '', city: '', logo_url: '' });
+      setNewPartner({ name: '', contact: '', state: '', cities: '', logo_url: '' });
     } catch (error) {
       setToast({ message: 'Erro ao cadastrar parceiro.', type: 'error' });
     }
@@ -543,7 +599,7 @@ export default function App() {
         name: showEditPartnerModal.name,
         contact: showEditPartnerModal.contact,
         state: showEditPartnerModal.state,
-        city: showEditPartnerModal.city,
+        cities: showEditPartnerModal.cities,
         logo_url: showEditPartnerModal.logo_url || ''
       });
       
@@ -697,7 +753,7 @@ export default function App() {
       .filter(p => partnerFilter === 'active' ? p.status !== 'cancelled' : p.status === 'cancelled')
       .filter(p => 
         p.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (p.cities || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.state?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         p.contact?.toLowerCase().includes(searchTerm.toLowerCase())
       );
@@ -779,73 +835,130 @@ export default function App() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4 overflow-hidden relative">
-        {/* Background Accents */}
-        <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-          <div className="absolute -top-24 -left-24 w-96 h-96 bg-indigo-600/10 rounded-full blur-3xl"></div>
-          <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-emerald-600/10 rounded-full blur-3xl"></div>
+      <div className="min-h-screen bg-slate-950 flex flex-col lg:flex-row overflow-hidden relative">
+        {/* Left Side - Visual & Branding */}
+        <div className="hidden lg:flex lg:w-1/2 bg-indigo-600 relative items-center justify-center p-20 overflow-hidden">
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#ffffff10_1px,transparent_1px),linear-gradient(to_bottom,#ffffff10_1px,transparent_1px)] bg-[size:4rem_4rem]"></div>
+          <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-indigo-600 via-indigo-700 to-violet-800 opacity-90"></div>
+          
+          <div className="relative z-10 text-white max-w-lg">
+            <motion.div 
+              initial={{ opacity: 0, x: -50 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.8 }}
+            >
+              <div className="w-24 h-24 bg-white/10 backdrop-blur-md rounded-3xl flex items-center justify-center mb-10 border border-white/20 shadow-2xl">
+                <Network size={56} className="text-white" />
+              </div>
+              <h1 className="text-6xl font-black tracking-tighter mb-6 leading-none">
+                SINTESE <br />
+                <span className="text-indigo-200">CORE</span>
+              </h1>
+              <p className="text-2xl font-medium text-indigo-100/80 leading-relaxed mb-10">
+                Simplificando a gestão dos seus parceiros e orquestrando sua inteligência de rede.
+              </p>
+              
+              <div className="grid grid-cols-2 gap-8">
+                <div className="space-y-2">
+                  <p className="text-4xl font-black">100%</p>
+                  <p className="text-sm font-bold uppercase tracking-widest text-indigo-200/60">Visibilidade</p>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-4xl font-black">Real-time</p>
+                  <p className="text-sm font-bold uppercase tracking-widest text-indigo-200/60">Monitoramento</p>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+
+          {/* Decorative Elements */}
+          <div className="absolute -bottom-20 -left-20 w-96 h-96 bg-white/5 rounded-full blur-3xl"></div>
+          <div className="absolute -top-20 -right-20 w-96 h-96 bg-indigo-400/20 rounded-full blur-3xl"></div>
         </div>
 
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-slate-900/80 backdrop-blur-xl p-6 sm:p-8 rounded-[2rem] sm:rounded-[2.5rem] shadow-2xl w-full max-w-md border border-slate-800 relative z-10"
-        >
-          <div className="flex flex-col items-center mb-10">
-            <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 mb-6 rotate-3">
-              <Network size={40} />
+        {/* Right Side - Login Form */}
+        <div className="flex-1 flex items-center justify-center p-6 sm:p-12 bg-slate-950 relative">
+          <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] opacity-20"></div>
+          
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="w-full max-w-md relative z-10"
+          >
+            <div className="lg:hidden flex flex-col items-center mb-12">
+              <div className="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-xl mb-4">
+                <Network size={32} />
+              </div>
+              <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Sintese <span className="text-indigo-500">Core</span></h1>
             </div>
-            <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Sintese <span className="text-indigo-500">Core</span></h1>
-            <p className="text-slate-400 text-center mt-3 font-medium">Network Intelligence & Last-Mile Orchestration</p>
-          </div>
 
-          <form onSubmit={handleLogin} className="space-y-5">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">E-mail Corporativo</label>
-              <input 
-                type="email"
-                required
-                className="w-full px-5 py-4 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-600"
-                placeholder="admin@sintese.com"
-                value={loginEmail}
-                onChange={e => setLoginEmail(e.target.value)}
-              />
+            <div className="bg-slate-900/50 backdrop-blur-xl p-8 sm:p-10 rounded-[2.5rem] border border-slate-800 shadow-2xl">
+              <div className="mb-10">
+                <h2 className="text-2xl font-black text-white mb-2">Entrar na sua conta</h2>
+                <p className="text-slate-500 text-sm font-medium">Acesse o painel administrativo</p>
+              </div>
+
+              <form onSubmit={handleLogin} className="space-y-6">
+                <div>
+                  <div className="flex justify-between items-center mb-2 ml-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">E-mail Corporativo</label>
+                    <User size={14} className="text-slate-600" />
+                  </div>
+                  <input 
+                    type="email"
+                    required
+                    className="w-full px-6 py-4 rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="admin@sintese.com"
+                    value={loginEmail}
+                    onChange={e => setLoginEmail(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between items-center mb-2 ml-1">
+                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Senha de Acesso</label>
+                    <Lock size={14} className="text-slate-600" />
+                  </div>
+                  <input 
+                    type="password"
+                    required
+                    className="w-full px-6 py-4 rounded-2xl bg-slate-800/50 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-600"
+                    placeholder="••••••••"
+                    value={loginPassword}
+                    onChange={e => setLoginPassword(e.target.value)}
+                  />
+                </div>
+                
+                {loginError && (
+                  <motion.p 
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="text-rose-400 text-xs font-bold bg-rose-400/10 p-4 rounded-2xl border border-rose-400/20 flex items-center gap-3"
+                  >
+                    <AlertCircle size={16} />
+                    {loginError}
+                  </motion.p>
+                )}
+
+                <button 
+                  type="submit"
+                  className="w-full py-5 bg-indigo-600 text-white rounded-2xl font-black text-lg hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/20 active:scale-[0.98] mt-4"
+                >
+                  Acessar Painel
+                </button>
+              </form>
+
+              <div className="mt-10 pt-8 border-t border-slate-800/50 flex flex-col items-center gap-4">
+                <div className="flex items-center gap-2 text-slate-600">
+                  <ShieldCheck size={14} />
+                  <span className="text-[10px] font-bold uppercase tracking-widest">Conexão Segura via Firebase</span>
+                </div>
+                <p className="text-[10px] font-bold text-slate-700 uppercase tracking-widest">
+                  &copy; {new Date().getFullYear()} Todos os direitos reservado Miqueias Dev
+                </p>
+              </div>
             </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Senha de Acesso</label>
-              <input 
-                type="password"
-                required
-                className="w-full px-5 py-4 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all placeholder:text-slate-600"
-                placeholder="••••••••"
-                value={loginPassword}
-                onChange={e => setLoginPassword(e.target.value)}
-              />
-            </div>
-            
-            {loginError && (
-              <motion.p 
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                className="text-rose-400 text-sm font-semibold bg-rose-400/10 p-4 rounded-2xl border border-rose-400/20"
-              >
-                {loginError}
-              </motion.p>
-            )}
-
-            <button 
-              type="submit"
-              className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-lg hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-900/20 active:scale-[0.98] mt-4"
-            >
-              Acessar Painel
-            </button>
-          </form>
-
-          <div className="mt-10 pt-8 border-t border-slate-800 flex items-center justify-center gap-2 text-slate-500">
-            <ShieldCheck size={14} />
-            <span className="text-[10px] font-bold uppercase tracking-widest">Conexão Segura via Firebase</span>
-          </div>
-        </motion.div>
+          </motion.div>
+        </div>
       </div>
     );
   }
@@ -886,7 +999,7 @@ export default function App() {
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 w-72 bg-slate-900 border-r border-slate-800 p-8 flex flex-col z-[70] transition-transform duration-500 lg:relative lg:translate-x-0",
+        "fixed inset-y-0 left-0 w-72 bg-slate-950/80 backdrop-blur-2xl border-r border-white/5 p-8 flex flex-col z-[70] transition-transform duration-500 lg:relative lg:translate-x-0",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
         {/* Toast Notification */}
@@ -907,11 +1020,12 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        <div className="flex items-center gap-4 mb-12 px-2">
-          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 rotate-3">
+        <div className="flex items-center gap-4 mb-12 px-2 relative">
+          <div className="absolute -top-10 -left-10 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl"></div>
+          <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/40 rotate-3 border border-white/10 relative z-10">
             <Network size={28} />
           </div>
-          <div>
+          <div className="relative z-10">
             <h1 className="text-xl font-black tracking-tighter text-white uppercase leading-none">Sintese <span className="text-indigo-500">Core</span></h1>
             <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mt-1">Inteligência de Rede</p>
           </div>
@@ -1061,7 +1175,7 @@ export default function App() {
               {/* Stats Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
                 <StatCard 
-                  label="Nós de Rede" 
+                  label="Parceiros" 
                   value={stats.totalPartners} 
                   icon={Globe} 
                   trend="+4%" 
@@ -1102,10 +1216,10 @@ export default function App() {
               </div>
 
               <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
-                <div className="bg-slate-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+                <div className="bg-white/5 backdrop-blur-xl p-6 sm:p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden transition-all duration-500 hover:border-white/20">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
                   <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-                    <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                    <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400 border border-indigo-500/20">
                       <MapIcon size={20} />
                     </div>
                     Distribuição Regional de Nós
@@ -1126,10 +1240,10 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+                <div className="bg-white/5 backdrop-blur-xl p-6 sm:p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden transition-all duration-500 hover:border-white/20">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl -mr-16 -mt-16"></div>
                   <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
-                    <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                    <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400 border border-emerald-500/20">
                       <Globe size={20} />
                     </div>
                     Alocação de Recursos por Parceiro
@@ -1156,8 +1270,8 @@ export default function App() {
 
               {/* Partner Ranking & Recent Activity */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                  <div className="p-6 sm:p-8 border-b border-slate-800">
+                <div className="lg:col-span-1 bg-white/5 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden transition-all duration-500 hover:border-white/20">
+                  <div className="p-6 sm:p-8 border-b border-white/10">
                     <h3 className="text-xl font-bold text-white">Top Parceiros</h3>
                     <p className="text-xs text-slate-500 mt-1 uppercase tracking-widest font-bold">Por volume de pontos</p>
                   </div>
@@ -1173,13 +1287,7 @@ export default function App() {
                         <div key={p.id} className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-3 min-w-0">
                             <span className="text-xs font-black text-slate-600 w-4 flex-shrink-0">{idx + 1}</span>
-                            <div className="w-8 h-8 bg-indigo-500/10 rounded-lg flex items-center justify-center text-indigo-400 text-xs font-black overflow-hidden flex-shrink-0">
-                              {p.logo_url ? (
-                                <img src={p.logo_url} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                              ) : (
-                                p.name.charAt(0)
-                              )}
-                            </div>
+                            <PartnerLogo name={p.name} url={p.logo_url} size="sm" />
                             <span className="text-sm font-bold text-slate-200 truncate">{p.name}</span>
                           </div>
                           <div className="flex items-center gap-2 flex-shrink-0">
@@ -1196,17 +1304,17 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="lg:col-span-2 bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                  <div className="p-6 sm:p-8 border-b border-slate-800 flex justify-between items-center">
+                <div className="lg:col-span-2 bg-white/5 backdrop-blur-xl rounded-[2.5rem] border border-white/10 shadow-2xl overflow-hidden transition-all duration-500 hover:border-white/20">
+                  <div className="p-6 sm:p-8 border-b border-white/10 flex justify-between items-center">
                     <h3 className="text-xl font-bold text-white">Atividade Recente</h3>
                     <button onClick={() => setActiveTab('points')} className="text-indigo-400 text-sm font-bold hover:text-indigo-300 transition-colors">Ver todos</button>
                   </div>
-                  <div className="divide-y divide-slate-800">
+                  <div className="divide-y divide-white/5">
                     {points.slice(0, 5).map((point) => (
-                      <div key={point.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-800/30 transition-all group gap-3">
+                      <div key={point.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-white/5 transition-all group gap-3">
                         <div className="flex items-center gap-4">
                           <div className={cn(
-                            "w-10 h-10 rounded-xl flex items-center justify-center",
+                            "w-10 h-10 rounded-xl flex items-center justify-center border border-white/10 shadow-inner",
                             point.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : 
                             point.status === 'pending' ? 'bg-amber-500/10 text-amber-400' : 
                             point.status === 'cancelled' ? 'bg-rose-500/10 text-rose-400' : 'bg-indigo-500/10 text-indigo-400'
@@ -1218,14 +1326,7 @@ export default function App() {
                           <div>
                             <p className="font-bold text-white text-base">{point.customer_name}</p>
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              {partners.find(p => p.id === point.partner_id)?.logo_url && (
-                                <img 
-                                  src={partners.find(p => p.id === point.partner_id)?.logo_url} 
-                                  alt="" 
-                                  className="w-3 h-3 rounded-sm object-cover"
-                                  referrerPolicy="no-referrer"
-                                />
-                              )}
+                              <PartnerLogo name={partners.find(p => p.id === point.partner_id)?.name || ''} url={partners.find(p => p.id === point.partner_id)?.logo_url} size="sm" />
                               <p className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">{point.partner_name}</p>
                             </div>
                           </div>
@@ -1432,21 +1533,24 @@ export default function App() {
               className="space-y-10 relative z-10"
             >
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Total Pendente</p>
-                  <p className="text-3xl font-black text-amber-400">
+                <div className="bg-white/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden group transition-all duration-500">
+                  <div className="absolute -right-8 -top-8 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl opacity-20 group-hover:opacity-30 transition-opacity" />
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 relative z-10">Total Pendente</p>
+                  <p className="text-3xl font-black text-amber-400 relative z-10">
                     R$ {points.filter(p => p.status === 'completed' && p.payment_status !== 'paid').reduce((acc, curr) => acc + curr.cost, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
-                <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Total Pago</p>
-                  <p className="text-3xl font-black text-emerald-400">
+                <div className="bg-white/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden group transition-all duration-500">
+                  <div className="absolute -right-8 -top-8 w-32 h-32 bg-emerald-500/10 rounded-full blur-3xl opacity-20 group-hover:opacity-30 transition-opacity" />
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 relative z-10">Total Pago</p>
+                  <p className="text-3xl font-black text-emerald-400 relative z-10">
                     R$ {points.filter(p => p.payment_status === 'paid').reduce((acc, curr) => acc + curr.cost, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
-                <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
-                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Aguardando Conclusão</p>
-                  <p className="text-3xl font-black text-slate-400">
+                <div className="bg-white/5 backdrop-blur-xl p-8 rounded-[2.5rem] border border-white/10 shadow-2xl relative overflow-hidden group transition-all duration-500">
+                  <div className="absolute -right-8 -top-8 w-32 h-32 bg-slate-500/10 rounded-full blur-3xl opacity-20 group-hover:opacity-30 transition-opacity" />
+                  <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2 relative z-10">Aguardando Conclusão</p>
+                  <p className="text-3xl font-black text-slate-400 relative z-10">
                     R$ {points.filter(p => p.status === 'pending').reduce((acc, curr) => acc + curr.cost, 0).toLocaleString('pt-BR')}
                   </p>
                 </div>
@@ -1579,6 +1683,7 @@ export default function App() {
                         <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Empresa</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Contato</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Localização</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Incidentes SLA</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Status</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-right">Ações</th>
                     </tr>
@@ -1589,18 +1694,36 @@ export default function App() {
                         <tr key={partner.id} className={cn("hover:bg-slate-800/30 transition-all", partner.status === 'cancelled' && "opacity-50")}>
                           <td className="px-8 py-6">
                             <div className="flex items-center gap-4">
-                              <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 font-black overflow-hidden">
-                                {partner.logo_url ? (
-                                  <img src={partner.logo_url} alt={partner.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                                ) : (
-                                  partner.name.charAt(0)
-                                )}
-                              </div>
+                              <PartnerLogo name={partner.name} url={partner.logo_url} />
                               <span className="font-bold text-white text-lg">{partner.name}</span>
                             </div>
                           </td>
                           <td className="px-8 py-6 text-slate-400 font-medium">{partner.contact}</td>
-                          <td className="px-8 py-6 text-slate-400 font-medium">{partner.city}, {partner.state}</td>
+                          <td className="px-8 py-6 text-slate-400 font-medium">
+                            <div className="flex flex-col">
+                              <span className="text-white font-bold">{partner.state}</span>
+                              <span className="text-[10px] text-slate-500 font-black uppercase tracking-wider truncate max-w-[200px]" title={partner.cities}>
+                                {partner.cities}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <div className={cn(
+                                "px-3 py-1 rounded-lg text-xs font-black",
+                                (partner.sla_incidents || 0) > 0 ? "bg-rose-500/10 text-rose-400" : "bg-slate-800 text-slate-500"
+                              )}>
+                                {partner.sla_incidents || 0}
+                              </div>
+                              <button 
+                                onClick={() => handleReportIncident(partner.id)}
+                                className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-400/10 rounded-lg transition-all"
+                                title="Reportar Incidente SLA"
+                              >
+                                <AlertTriangle size={14} />
+                              </button>
+                            </div>
+                          </td>
                           <td className="px-8 py-6">
                             <span className={cn(
                               "px-3 py-1 text-[10px] font-black rounded-lg uppercase tracking-widest",
@@ -1802,6 +1925,17 @@ export default function App() {
           </motion.div>
         )}
         </AnimatePresence>
+        <footer className="mt-20 py-10 border-t border-slate-800/50 flex flex-col md:flex-row justify-between items-center gap-6 text-slate-500">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-indigo-600/20 rounded-lg flex items-center justify-center text-indigo-400">
+              <Network size={16} />
+            </div>
+            <p className="text-xs font-bold uppercase tracking-widest">Sintese Core | Inteligência Last-Mile</p>
+          </div>
+          <p className="text-[10px] font-black uppercase tracking-[0.2em]">
+            © {new Date().getFullYear()} Todos os direitos reservado Miqueias Dev
+          </p>
+        </footer>
       </main>
 
       {/* Modals */}
@@ -1856,12 +1990,13 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Cidade</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Cidades de Atuação</label>
                         <input 
                           required
+                          placeholder="Ex: São Paulo, Campinas, Santos"
                           className="w-full px-5 py-4 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                          value={newPartner.city}
-                          onChange={e => setNewPartner({...newPartner, city: e.target.value})}
+                          value={newPartner.cities}
+                          onChange={e => setNewPartner({...newPartner, cities: e.target.value})}
                         />
                       </div>
                     </div>
@@ -1927,12 +2062,13 @@ export default function App() {
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Cidade</label>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Cidades de Atuação</label>
                         <input 
                           required
+                          placeholder="Ex: São Paulo, Campinas, Santos"
                           className="w-full px-5 py-4 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                          value={showEditPartnerModal.city}
-                          onChange={e => setShowEditPartnerModal({...showEditPartnerModal, city: e.target.value})}
+                          value={showEditPartnerModal.cities}
+                          onChange={e => setShowEditPartnerModal({...showEditPartnerModal, cities: e.target.value})}
                         />
                       </div>
                     </div>
