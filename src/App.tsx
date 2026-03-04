@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   LayoutDashboard, 
   Users, 
@@ -24,8 +24,18 @@ import {
   CreditCard,
   Receipt,
   Menu,
-  X
+  X,
+  Download,
+  Upload,
+  Network,
+  Globe,
+  Activity,
+  Shield,
+  Cpu,
+  Layers,
+  AlertTriangle
 } from 'lucide-react';
+import Papa from 'papaparse';
 import { 
   BarChart, 
   Bar, 
@@ -55,7 +65,8 @@ import {
   query, 
   orderBy,
   Timestamp,
-  where
+  where,
+  writeBatch
 } from 'firebase/firestore';
 import { 
   signInWithEmailAndPassword, 
@@ -86,6 +97,9 @@ interface Point {
   cost: number;
   status: 'pending' | 'completed' | 'cancelled';
   payment_status?: 'pending' | 'paid';
+  sla_status?: 'within' | 'warning' | 'breached';
+  equipment?: string;
+  bandwidth?: string;
   created_at: any;
 }
 
@@ -97,11 +111,91 @@ interface MonthlyStat {
 
 // --- Components ---
 
+const BrazilMap = () => {
+  return (
+    <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden h-[400px] group">
+      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+        <Globe size={120} />
+      </div>
+      <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3 relative z-10">
+        <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+          <MapIcon size={20} />
+        </div>
+        Cobertura de Rede Nacional
+      </h3>
+      <div className="relative h-full flex items-center justify-center">
+        {/* Simplified Brazil SVG Map */}
+        <svg viewBox="0 0 500 500" className="w-full h-full opacity-20 text-slate-500 fill-current">
+          <path d="M250,50 L300,70 L350,100 L380,150 L400,200 L420,250 L400,300 L350,350 L300,400 L250,450 L200,400 L150,350 L100,300 L80,250 L100,200 L120,150 L150,100 L200,70 Z" />
+          {/* Mock nodes in Brazil states */}
+          <circle cx="250" cy="150" r="4" className="fill-indigo-500 animate-pulse" />
+          <circle cx="350" cy="250" r="4" className="fill-indigo-500 animate-pulse" />
+          <circle cx="200" cy="350" r="4" className="fill-indigo-500 animate-pulse" />
+          <circle cx="150" cy="200" r="4" className="fill-indigo-500 animate-pulse" />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <p className="text-4xl font-black text-white/10 uppercase tracking-[0.3em]">Brasil</p>
+          <p className="text-[10px] font-black text-emerald-400/30 uppercase tracking-[0.2em] mt-2">Nós de Rede Ativos em 26 Estados</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const NetworkTopology = () => {
+  return (
+    <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden h-[400px] group">
+      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+        <Network size={120} />
+      </div>
+      <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3 relative z-10">
+        <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+          <Activity size={20} />
+        </div>
+        Topologia de Rede Ativa
+      </h3>
+      <div className="relative h-full flex items-center justify-center">
+         <svg viewBox="0 0 800 400" className="w-full h-full opacity-30">
+            <defs>
+              <filter id="glow">
+                <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+            <g className="text-indigo-500/20">
+              <line x1="400" y1="200" x2="150" y2="80" stroke="currentColor" strokeWidth="1" />
+              <line x1="400" y1="200" x2="650" y2="120" stroke="currentColor" strokeWidth="1" />
+              <line x1="400" y1="200" x2="250" y2="320" stroke="currentColor" strokeWidth="1" />
+              <line x1="400" y1="200" x2="550" y2="280" stroke="currentColor" strokeWidth="1" />
+              <line x1="150" y1="80" x2="250" y2="320" stroke="currentColor" strokeWidth="0.5" strokeDasharray="4" />
+              <line x1="650" y1="120" x2="550" y2="280" stroke="currentColor" strokeWidth="0.5" strokeDasharray="4" />
+            </g>
+            
+            <circle cx="400" cy="200" r="10" className="fill-indigo-500" filter="url(#glow)" />
+            <circle cx="150" cy="80" r="5" className="fill-slate-600" />
+            <circle cx="650" cy="120" r="5" className="fill-slate-600" />
+            <circle cx="250" cy="320" r="5" className="fill-slate-600" />
+            <circle cx="550" cy="280" r="5" className="fill-slate-600" />
+            
+            <circle cx="400" cy="200" r="20" className="stroke-indigo-500/20 fill-none animate-ping" />
+         </svg>
+         <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <p className="text-5xl font-black text-white/5 uppercase tracking-[0.4em]">Sintese Core</p>
+            <p className="text-[10px] font-black text-indigo-400/30 uppercase tracking-[0.3em] mt-4">Infraestrutura de Rede Nacional</p>
+         </div>
+      </div>
+    </div>
+  );
+};
+
 const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active: boolean, onClick: () => void }) => (
   <button
     onClick={onClick}
     className={cn(
-      "flex items-center w-full gap-3 px-4 py-3 rounded-xl transition-all duration-300 group relative",
+      "flex items-center w-full gap-3 px-4 py-3 rounded-xl transition-all duration-300 group relative overflow-hidden",
       active 
         ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" 
         : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-100"
@@ -110,11 +204,18 @@ const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label:
     {active && (
       <motion.div 
         layoutId="active-pill"
-        className="absolute left-0 w-1 h-6 bg-indigo-400 rounded-r-full"
+        className="absolute left-0 w-1 h-6 bg-white/40 rounded-r-full"
       />
     )}
-    <Icon size={20} className={cn("transition-transform duration-300", active ? "scale-110" : "group-hover:scale-110")} />
-    <span className="font-medium">{label}</span>
+    <div className="relative z-10 flex items-center gap-3">
+      <Icon size={18} className={cn("transition-transform duration-300", active ? "scale-110" : "group-hover:scale-110")} />
+      <span className="font-bold text-[10px] uppercase tracking-[0.15em]">{label}</span>
+    </div>
+    {active && (
+      <div className="absolute right-3 top-1/2 -translate-y-1/2 opacity-40">
+        <ChevronRight size={12} />
+      </div>
+    )}
   </button>
 );
 
@@ -125,9 +226,12 @@ const StatCard = ({ label, value, icon: Icon, trend, color }: { label: string, v
   return (
     <motion.div 
       whileHover={{ y: -4 }}
-      className="bg-slate-900/50 backdrop-blur-sm p-6 rounded-2xl border border-slate-800 shadow-xl"
+      className="bg-slate-900/50 backdrop-blur-sm p-6 rounded-2xl border border-slate-800 shadow-xl relative overflow-hidden group"
     >
-      <div className="flex justify-between items-start mb-4">
+      <div className="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity">
+        <Cpu size={40} />
+      </div>
+      <div className="flex justify-between items-start mb-4 relative z-10">
         <div className={cn("p-3 rounded-xl bg-opacity-20", color.replace('bg-', 'bg-opacity-20 text-'))}>
           <Icon size={24} className={cn("text-opacity-100", color.replace('bg-', 'text-'))} />
         </div>
@@ -172,7 +276,18 @@ export default function App() {
   const [reductionValue, setReductionValue] = useState(0);
   
   const [newPartner, setNewPartner] = useState({ name: '', contact: '', state: '', city: '', logo_url: '' });
-  const [newPoint, setNewPoint] = useState({ customer_name: '', address: '', city: '', state: '', partner_id: '', cost: 0, status: 'pending' as const });
+  const [newPoint, setNewPoint] = useState({ 
+    customer_name: '', 
+    address: '', 
+    city: '', 
+    state: '', 
+    partner_id: '', 
+    cost: 0, 
+    status: 'pending' as const,
+    sla_status: 'within' as 'within' | 'warning' | 'breached',
+    equipment: '',
+    bandwidth: ''
+  });
   const [partnerFilter, setPartnerFilter] = useState<'active' | 'cancelled'>('active');
   const [pointFilter, setPointFilter] = useState<'active' | 'cancelled'>('active');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -340,6 +455,65 @@ export default function App() {
     }
   };
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadTemplate = () => {
+    const csvContent = "nome,contato,estado,cidade,logo_url\nExemplo Empresa,João Silva,SP,São Paulo,https://exemplo.com/logo.png";
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "modelo_importacao_parceiros.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleImportCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    Papa.parse(file, {
+      header: true,
+      skipEmptyLines: true,
+      complete: async (results) => {
+        const data = results.data as any[];
+        if (data.length === 0) {
+          setToast({ message: 'O arquivo está vazio.', type: 'error' });
+          return;
+        }
+
+        try {
+          const batch = writeBatch(db);
+          data.forEach((row) => {
+            const partnerRef = doc(collection(db, 'partners'));
+            batch.set(partnerRef, {
+              name: row.nome || row.name || '',
+              contact: row.contato || row.contact || '',
+              state: row.estado || row.state || '',
+              city: row.cidade || row.city || '',
+              logo_url: row.logo_url || '',
+              status: 'active',
+              created_at: Timestamp.now()
+            });
+          });
+
+          await batch.commit();
+          setToast({ message: `${data.length} parceiros importados com sucesso!`, type: 'success' });
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        } catch (error) {
+          console.error("Erro na importação:", error);
+          setToast({ message: 'Erro ao importar parceiros. Verifique o formato do arquivo.', type: 'error' });
+        }
+      },
+      error: (error: any) => {
+        console.error("Erro no parse do CSV:", error);
+        setToast({ message: 'Erro ao ler o arquivo CSV.', type: 'error' });
+      }
+    });
+  };
+
   const handleLogout = async () => {
     await signOut(auth);
   };
@@ -392,7 +566,18 @@ export default function App() {
       });
       setToast({ message: 'Ponto cadastrado com sucesso!', type: 'success' });
       setShowPointModal(false);
-      setNewPoint({ customer_name: '', address: '', city: '', state: '', partner_id: '', cost: 0, status: 'pending' });
+      setNewPoint({ 
+        customer_name: '', 
+        address: '', 
+        city: '', 
+        state: '', 
+        partner_id: '', 
+        cost: 0, 
+        status: 'pending',
+        sla_status: 'within',
+        equipment: '',
+        bandwidth: ''
+      });
     } catch (error) {
       setToast({ message: 'Erro ao cadastrar ponto.', type: 'error' });
     }
@@ -581,11 +766,12 @@ export default function App() {
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center h-screen bg-slate-950">
+    <div className="flex items-center justify-center h-screen bg-slate-950 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-20"></div>
       <div className="relative">
         <div className="w-16 h-16 border-4 border-indigo-500/20 border-t-indigo-500 rounded-full animate-spin"></div>
         <div className="absolute inset-0 flex items-center justify-center">
-          <TrendingUp size={24} className="text-indigo-500" />
+          <Network size={24} className="text-indigo-500" />
         </div>
       </div>
     </div>
@@ -607,10 +793,10 @@ export default function App() {
         >
           <div className="flex flex-col items-center mb-10">
             <div className="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 mb-6 rotate-3">
-              <TrendingUp size={40} />
+              <Network size={40} />
             </div>
-            <h1 className="text-3xl font-black text-white tracking-tight uppercase">Sintese</h1>
-            <p className="text-slate-400 text-center mt-3 font-medium">Gestão Premium de Telecomunicações</p>
+            <h1 className="text-3xl font-black text-white tracking-tighter uppercase">Sintese <span className="text-indigo-500">Core</span></h1>
+            <p className="text-slate-400 text-center mt-3 font-medium">Network Intelligence & Last-Mile Orchestration</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-5">
@@ -665,14 +851,17 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col lg:flex-row h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-indigo-500/30">
+    <div className="flex flex-col lg:flex-row h-screen bg-slate-950 text-slate-200 overflow-hidden font-sans selection:bg-indigo-500/30 relative">
+      {/* Global Grid Background */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_right,#1e293b_1px,transparent_1px),linear-gradient(to_bottom,#1e293b_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_0%,#000_70%,transparent_100%)] opacity-20 pointer-events-none"></div>
+
       {/* Mobile Header */}
       <header className="lg:hidden flex items-center justify-between p-4 bg-slate-900 border-b border-slate-800 z-50">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-500/20">
-            <TrendingUp size={24} />
+            <Network size={24} />
           </div>
-          <h1 className="text-lg font-black tracking-tight text-white uppercase">Sintese</h1>
+          <h1 className="text-lg font-black tracking-tighter text-white uppercase">Sintese <span className="text-indigo-500">Core</span></h1>
         </div>
         <button 
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
@@ -720,15 +909,15 @@ export default function App() {
 
         <div className="flex items-center gap-4 mb-12 px-2">
           <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-2xl shadow-indigo-500/20 rotate-3">
-            <TrendingUp size={28} />
+            <Network size={28} />
           </div>
           <div>
-            <h1 className="text-xl font-black tracking-tight text-white uppercase">Sintese</h1>
-            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Last-Mile</p>
+            <h1 className="text-xl font-black tracking-tighter text-white uppercase leading-none">Sintese <span className="text-indigo-500">Core</span></h1>
+            <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mt-1">Inteligência de Rede</p>
           </div>
         </div>
 
-        <nav className="flex-1 space-y-3">
+        <nav className="flex-1 space-y-2">
           <SidebarItem 
             icon={LayoutDashboard} 
             label="Dashboard" 
@@ -736,13 +925,13 @@ export default function App() {
             onClick={() => { setActiveTab('dashboard'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
-            icon={Users} 
+            icon={Globe} 
             label="Parceiros" 
             active={activeTab === 'partners'} 
             onClick={() => { setActiveTab('partners'); setIsSidebarOpen(false); }} 
           />
           <SidebarItem 
-            icon={MapPin} 
+            icon={Layers} 
             label="Pontos / Clientes" 
             active={activeTab === 'points'} 
             onClick={() => { setActiveTab('points'); setIsSidebarOpen(false); }} 
@@ -761,7 +950,18 @@ export default function App() {
           />
         </nav>
 
-        <div className="mt-auto pt-8 border-t border-slate-800/50">
+        <div className="mt-auto pt-8 border-t border-slate-800/50 space-y-4">
+          <div className="px-4 py-3 bg-slate-800/30 rounded-2xl border border-slate-800/50 flex items-center gap-3">
+            <div className="relative">
+              <Activity size={16} className="text-emerald-500" />
+              <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
+            </div>
+            <div className="flex-1">
+              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Status do Sistema</p>
+              <p className="text-[10px] font-bold text-emerald-500 uppercase">Operacional</p>
+            </div>
+          </div>
+
           <div className="bg-slate-900/50 p-4 rounded-2xl border border-slate-800 flex items-center justify-between group">
             <div className="overflow-hidden">
               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Operador</p>
@@ -785,13 +985,25 @@ export default function App() {
 
         <header className="flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12 relative z-10">
           <div>
-            <div className="flex items-center gap-2 text-indigo-400 text-xs font-bold uppercase tracking-widest mb-2">
-              <ChevronRight size={14} />
-              <span>Sistema de Gestão</span>
+            <div className="flex items-center gap-2 text-indigo-400 text-[10px] font-black uppercase tracking-[0.2em] mb-2">
+              <Activity size={12} className="animate-pulse" />
+              <span>Monitoramento de Rede Ativo</span>
             </div>
-            <h2 className="text-3xl lg:text-4xl font-black text-white capitalize tracking-tight">
-              {activeTab === 'reports' ? 'Relatórios' : activeTab === 'finance' ? 'Financeiro' : activeTab}
+            <h2 className="text-3xl lg:text-4xl font-black text-white capitalize tracking-tighter">
+              {activeTab === 'reports' ? 'Relatórios de Rede' : 
+               activeTab === 'finance' ? 'Fluxo Financeiro' : 
+               activeTab === 'dashboard' ? 'Painel de Controle' : 
+               activeTab === 'partners' ? 'Gestão de Parceiros' :
+               activeTab === 'points' ? 'Pontos & Clientes' : activeTab}
             </h2>
+          </div>
+
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-900/50 border border-slate-800 rounded-lg">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
+              <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Dados em Tempo Real</span>
+            </div>
+            <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mr-1">Última Sinc: {new Date().toLocaleTimeString()}</p>
           </div>
 
             <div className="flex flex-wrap gap-4 w-full md:w-auto">
@@ -847,18 +1059,18 @@ export default function App() {
               className="space-y-10 relative z-10"
             >
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
                 <StatCard 
-                  label="Parceiros Ativos" 
+                  label="Nós de Rede" 
                   value={stats.totalPartners} 
-                  icon={Users} 
+                  icon={Globe} 
                   trend="+4%" 
                   color="bg-indigo-500" 
                 />
                 <StatCard 
-                  label="Pontos Atendidos" 
+                  label="Terminais Ativos" 
                   value={stats.totalPoints} 
-                  icon={MapPin} 
+                  icon={Layers} 
                   trend="+18%" 
                   color="bg-emerald-500" 
                 />
@@ -870,24 +1082,35 @@ export default function App() {
                   color="bg-amber-500" 
                 />
                 <StatCard 
-                  label="Pendência Pagto" 
+                  label="Liquidação Pendente" 
                   value={`R$ ${points.filter(p => p.status === 'completed' && p.payment_status !== 'paid').reduce((acc, curr) => acc + curr.cost, 0).toLocaleString('pt-BR')}`} 
                   icon={Wallet} 
-                  color="bg-orange-500" 
+                  color="bg-rose-500" 
                 />
                 <StatCard 
-                  label="Estados Ativos" 
-                  value={stats.pointsByState.length} 
-                  icon={MapIcon} 
-                  color="bg-rose-500" 
+                  label="SLA Violado" 
+                  value={points.filter(p => p.sla_status === 'breached').length} 
+                  icon={AlertTriangle} 
+                  color="bg-rose-600" 
                 />
               </div>
 
               {/* Charts Section */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-                <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
-                  <h3 className="text-xl font-bold text-white mb-8">Pontos por Estado</h3>
-                  <div className="h-80">
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
+                <NetworkTopology />
+                <BrazilMap />
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
+                <div className="bg-slate-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+                  <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
+                    <div className="p-2 bg-indigo-500/10 rounded-lg text-indigo-400">
+                      <MapIcon size={20} />
+                    </div>
+                    Distribuição Regional de Nós
+                  </h3>
+                  <div className="h-64 sm:h-80">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={stats.pointsByState}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
@@ -903,9 +1126,15 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="bg-slate-900/50 backdrop-blur-sm p-8 rounded-[2rem] border border-slate-800 shadow-xl">
-                  <h3 className="text-xl font-bold text-white mb-8">Distribuição de Custos por Parceiro</h3>
-                  <div className="h-80">
+                <div className="bg-slate-900/50 backdrop-blur-sm p-6 sm:p-8 rounded-[2rem] border border-slate-800 shadow-xl relative overflow-hidden">
+                  <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/5 rounded-full blur-3xl -mr-16 -mt-16"></div>
+                  <h3 className="text-xl font-bold text-white mb-8 flex items-center gap-3">
+                    <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-400">
+                      <Globe size={20} />
+                    </div>
+                    Alocação de Recursos por Parceiro
+                  </h3>
+                  <div className="h-64 sm:h-80">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={partners.map(p => ({
                         name: p.name.split(' ')[0],
@@ -928,11 +1157,11 @@ export default function App() {
               {/* Partner Ranking & Recent Activity */}
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 <div className="lg:col-span-1 bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                  <div className="p-8 border-b border-slate-800">
+                  <div className="p-6 sm:p-8 border-b border-slate-800">
                     <h3 className="text-xl font-bold text-white">Top Parceiros</h3>
                     <p className="text-xs text-slate-500 mt-1 uppercase tracking-widest font-bold">Por volume de pontos</p>
                   </div>
-                  <div className="p-6 space-y-6">
+                  <div className="p-5 sm:p-6 space-y-6">
                     {partners
                       .map(p => ({
                         ...p,
@@ -941,20 +1170,20 @@ export default function App() {
                       .sort((a, b) => b.pointCount - a.pointCount)
                       .slice(0, 5)
                       .map((p, idx) => (
-                        <div key={p.id} className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <span className="text-xs font-black text-slate-600 w-4">{idx + 1}</span>
-                            <div className="w-8 h-8 bg-indigo-500/10 rounded-lg flex items-center justify-center text-indigo-400 text-xs font-black overflow-hidden">
+                        <div key={p.id} className="flex items-center justify-between gap-4">
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span className="text-xs font-black text-slate-600 w-4 flex-shrink-0">{idx + 1}</span>
+                            <div className="w-8 h-8 bg-indigo-500/10 rounded-lg flex items-center justify-center text-indigo-400 text-xs font-black overflow-hidden flex-shrink-0">
                               {p.logo_url ? (
                                 <img src={p.logo_url} alt={p.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
                               ) : (
                                 p.name.charAt(0)
                               )}
                             </div>
-                            <span className="text-sm font-bold text-slate-200">{p.name}</span>
+                            <span className="text-sm font-bold text-slate-200 truncate">{p.name}</span>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <div className="h-1.5 w-16 bg-slate-800 rounded-full overflow-hidden">
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <div className="hidden xs:block h-1.5 w-12 sm:w-16 bg-slate-800 rounded-full overflow-hidden">
                               <div 
                                 className="h-full bg-indigo-500" 
                                 style={{ width: `${(p.pointCount / (stats.totalPoints || 1)) * 100}%` }}
@@ -968,13 +1197,13 @@ export default function App() {
                 </div>
 
                 <div className="lg:col-span-2 bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
-                  <div className="p-8 border-b border-slate-800 flex justify-between items-center">
+                  <div className="p-6 sm:p-8 border-b border-slate-800 flex justify-between items-center">
                     <h3 className="text-xl font-bold text-white">Atividade Recente</h3>
                     <button onClick={() => setActiveTab('points')} className="text-indigo-400 text-sm font-bold hover:text-indigo-300 transition-colors">Ver todos</button>
                   </div>
                   <div className="divide-y divide-slate-800">
                     {points.slice(0, 5).map((point) => (
-                      <div key={point.id} className="p-5 flex items-center justify-between hover:bg-slate-800/30 transition-all group">
+                      <div key={point.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-800/30 transition-all group gap-3">
                         <div className="flex items-center gap-4">
                           <div className={cn(
                             "w-10 h-10 rounded-xl flex items-center justify-center",
@@ -1001,7 +1230,7 @@ export default function App() {
                             </div>
                           </div>
                         </div>
-                        <div className="text-right">
+                        <div className="text-left sm:text-right pl-14 sm:pl-0">
                           <p className="font-black text-white">R$ {point.cost.toLocaleString('pt-BR')}</p>
                         </div>
                       </div>
@@ -1020,34 +1249,34 @@ export default function App() {
               exit={{ opacity: 0, y: -20 }}
               className="space-y-10 relative z-10"
             >
-              <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 p-8 shadow-xl">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+              <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 p-6 sm:p-8 shadow-xl">
+                <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-6">
                   <div>
                     <h3 className="text-xl font-bold text-white">Filtros de Relatório</h3>
                     <p className="text-slate-500 text-sm mt-1">Refine os dados por período para análise precisa.</p>
                   </div>
-                  <div className="flex flex-wrap gap-4">
-                    <div className="flex flex-col gap-1">
+                  <div className="flex flex-wrap items-end gap-4 w-full lg:w-auto">
+                    <div className="flex flex-col gap-1 flex-1 min-w-[140px]">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Início</label>
                       <input 
                         type="date" 
-                        className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                         value={dateRange.start}
                         onChange={e => setDateRange({...dateRange, start: e.target.value})}
                       />
                     </div>
-                    <div className="flex flex-col gap-1">
+                    <div className="flex flex-col gap-1 flex-1 min-w-[140px]">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest ml-1">Fim</label>
                       <input 
                         type="date" 
-                        className="bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-white text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                         value={dateRange.end}
                         onChange={e => setDateRange({...dateRange, end: e.target.value})}
                       />
                     </div>
                     <button 
                       onClick={() => setDateRange({ start: '', end: '' })}
-                      className="mt-auto px-4 py-2 bg-slate-800 text-slate-400 rounded-xl text-sm font-bold hover:bg-slate-700 transition-colors"
+                      className="px-4 py-2 bg-slate-800 text-slate-400 rounded-xl text-sm font-bold hover:bg-slate-700 transition-colors h-[38px]"
                     >
                       Limpar
                     </button>
@@ -1296,25 +1525,51 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-6 relative z-10"
             >
-              <div className="flex gap-3 bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800 w-fit">
-                <button 
-                  onClick={() => setPartnerFilter('active')}
-                  className={cn(
-                    "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                    partnerFilter === 'active' ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-500 hover:text-slate-300"
-                  )}
-                >
-                  Ativos
-                </button>
-                <button 
-                  onClick={() => setPartnerFilter('cancelled')}
-                  className={cn(
-                    "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
-                    partnerFilter === 'cancelled' ? "bg-rose-600 text-white shadow-lg shadow-rose-900/20" : "text-slate-500 hover:text-slate-300"
-                  )}
-                >
-                  Cancelados
-                </button>
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex gap-3 bg-slate-900/50 p-1.5 rounded-2xl border border-slate-800 w-fit">
+                  <button 
+                    onClick={() => setPartnerFilter('active')}
+                    className={cn(
+                      "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                      partnerFilter === 'active' ? "bg-indigo-600 text-white shadow-lg shadow-indigo-900/20" : "text-slate-500 hover:text-slate-300"
+                    )}
+                  >
+                    Ativos
+                  </button>
+                  <button 
+                    onClick={() => setPartnerFilter('cancelled')}
+                    className={cn(
+                      "px-6 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all",
+                      partnerFilter === 'cancelled' ? "bg-rose-600 text-white shadow-lg shadow-rose-900/20" : "text-slate-500 hover:text-slate-300"
+                    )}
+                  >
+                    Cancelados
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <input 
+                    type="file" 
+                    accept=".csv" 
+                    className="hidden" 
+                    ref={fileInputRef}
+                    onChange={handleImportCSV}
+                  />
+                  <button 
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all border border-slate-700"
+                  >
+                    <Upload size={16} />
+                    Importar CSV
+                  </button>
+                  <button 
+                    onClick={handleDownloadTemplate}
+                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-800 text-slate-300 rounded-xl text-xs font-black uppercase tracking-widest hover:bg-slate-700 transition-all border border-slate-700"
+                  >
+                    <Download size={16} />
+                    Modelo
+                  </button>
+                </div>
               </div>
               <div className="bg-slate-900/50 backdrop-blur-sm rounded-[2rem] border border-slate-800 shadow-xl overflow-hidden">
                 <div className="overflow-x-auto">
@@ -1451,6 +1706,7 @@ export default function App() {
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Endereço</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Parceiro</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Custo</th>
+                      <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">SLA</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Status</th>
                       <th className="px-8 py-5 text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] text-right">Ações</th>
                     </tr>
@@ -1466,6 +1722,23 @@ export default function App() {
                           </td>
                           <td className="px-8 py-6 text-indigo-400 font-bold">{point.partner_name || 'N/A'}</td>
                           <td className="px-8 py-6 font-black text-white text-lg">R$ {point.cost.toLocaleString('pt-BR')}</td>
+                          <td className="px-8 py-6">
+                            <div className="flex items-center gap-2">
+                              <div className={cn(
+                                "w-2 h-2 rounded-full animate-pulse",
+                                point.sla_status === 'within' ? 'bg-emerald-500' : 
+                                point.sla_status === 'warning' ? 'bg-amber-500' : 'bg-rose-500'
+                              )} />
+                              <span className={cn(
+                                "text-[10px] font-black uppercase tracking-widest",
+                                point.sla_status === 'within' ? 'text-emerald-400' : 
+                                point.sla_status === 'warning' ? 'text-amber-400' : 'text-rose-400'
+                              )}>
+                                {point.sla_status === 'within' ? 'Dentro' : 
+                                 point.sla_status === 'warning' ? 'Alerta' : 'Violado'}
+                              </span>
+                            </div>
+                          </td>
                           <td className="px-8 py-6">
                             <span className={cn(
                               "px-3 py-1 text-[10px] font-black rounded-lg uppercase tracking-widest",
@@ -1748,16 +2021,50 @@ export default function App() {
                         ))}
                       </select>
                     </div>
-                    <div>
-                      <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Custo da Operação (R$)</label>
-                      <input 
-                        required
-                        type="number"
-                        step="0.01"
-                        className="w-full px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                        value={newPoint.cost}
-                        onChange={e => setNewPoint({...newPoint, cost: Number(e.target.value)})}
-                      />
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Equipamento (ONT/Router)</label>
+                        <input 
+                          className="w-full px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          placeholder="Ex: Huawei HG8245H"
+                          value={newPoint.equipment || ''}
+                          onChange={e => setNewPoint({...newPoint, equipment: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Banda Contratada</label>
+                        <input 
+                          className="w-full px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          placeholder="Ex: 500Mbps"
+                          value={newPoint.bandwidth || ''}
+                          onChange={e => setNewPoint({...newPoint, bandwidth: e.target.value})}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Custo da Operação (R$)</label>
+                        <input 
+                          required
+                          type="number"
+                          step="0.01"
+                          className="w-full px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                          value={newPoint.cost}
+                          onChange={e => setNewPoint({...newPoint, cost: Number(e.target.value)})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 ml-1">Status SLA</label>
+                        <select 
+                          className="w-full px-5 py-3.5 rounded-2xl bg-slate-800 border border-slate-700 text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all appearance-none"
+                          value={newPoint.sla_status}
+                          onChange={e => setNewPoint({...newPoint, sla_status: e.target.value as any})}
+                        >
+                          <option value="within">Dentro do SLA</option>
+                          <option value="warning">Alerta de Prazo</option>
+                          <option value="breached">SLA Violado</option>
+                        </select>
+                      </div>
                     </div>
                     <div className="flex gap-4 pt-4">
                       <button 

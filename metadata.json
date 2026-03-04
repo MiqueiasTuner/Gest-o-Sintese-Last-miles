@@ -1,6 +1,6 @@
 {
-  "name": "Sintese Last-Mile",
-  "description": "Sistema de gestão de last-mile para telecomunicações, focado em controle de parceiros, custos e atendimento ao cliente final em todo o Brasil.",
+  "name": "Sintese Core | Inteligência Last-Mile",
+  "description": "Plataforma avançada de orquestração e inteligência de rede Last-Mile. Gestão de infraestrutura, parceiros estratégicos e eficiência operacional em escala nacional.",
   "requestFramePermissions": [
     "geolocation"
   ]
