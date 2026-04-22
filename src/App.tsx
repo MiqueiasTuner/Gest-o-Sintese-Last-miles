@@ -312,14 +312,14 @@ const MapResizer = ({ points, refreshTrigger }: { points: Point[], refreshTrigge
           map.fitBounds(bounds, { padding: [50, 50] });
         }
       }
-    }, 150);
+    }, 350); // Increased delay to ensure modal transitions are complete
     return () => clearTimeout(timer);
   }, [map, points, refreshTrigger]);
   
   return null;
 };
 
-const MapComponent = ({ points, height = "400px", onExpand, onEditPoint }: { points: Point[], height?: string, onExpand?: () => void, onEditPoint?: (p: Point) => void }) => {
+const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refreshTrigger }: { points: Point[], height?: string, onExpand?: () => void, onEditPoint?: (p: Point) => void, refreshTrigger?: any }) => {
   const [mapStyle, setMapStyle] = useState<'streets' | 'satellite'>('streets');
   const center: [number, number] = [-15.7801, -47.9292]; // Brasília center
 
@@ -374,7 +374,7 @@ const MapComponent = ({ points, height = "400px", onExpand, onEditPoint }: { poi
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url={mapStyle === 'streets' ? streetsUrl : satelliteUrl}
         />
-        <MapResizer points={points} refreshTrigger={height} />
+        <MapResizer points={points} refreshTrigger={refreshTrigger || height} />
         {points.map((point) => (
           point.lat && point.lng ? (
             <Marker 
@@ -630,6 +630,7 @@ export default function App() {
   const [showPointModal, setShowPointModal] = useState(false);
   const [showEditPointModal, setShowEditPointModal] = useState<Point | null>(null);
   const [showCustomerModal, setShowCustomerModal] = useState(false);
+  const [showEditCustomerModal, setShowEditCustomerModal] = useState<Customer | null>(null);
   const [showImportModal, setShowImportModal] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
   const [showReductionModal, setShowReductionModal] = useState<{id: string, currentCost: number} | null>(null);
@@ -806,8 +807,8 @@ export default function App() {
     }
 
     const activePartners = partners.filter(p => p.status !== 'cancelled');
-    const totalRevenue = filteredPoints.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-    const totalExpense = filteredPoints.reduce((acc, curr) => acc + (curr.expense || 0), 0);
+    const totalRevenue = filteredPoints.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0);
+    const totalExpense = filteredPoints.reduce((acc, curr) => acc + (Number(curr.expense) || 0), 0);
     const totalProfit = totalRevenue - totalExpense;
     
     const pointsByStateMap: Record<string, number> = {};
@@ -856,8 +857,8 @@ export default function App() {
         statsMap[monthDisplay] = { count: 0, total_revenue: 0, total_expense: 0, sortKey };
       }
       statsMap[monthDisplay].count += 1;
-      statsMap[monthDisplay].total_revenue += (p.revenue || 0);
-      statsMap[monthDisplay].total_expense += (p.expense || 0);
+      statsMap[monthDisplay].total_revenue += (Number(p.revenue) || 0);
+      statsMap[monthDisplay].total_expense += (Number(p.expense) || 0);
     });
 
     return Object.entries(statsMap).map(([month, data]) => ({
@@ -1170,6 +1171,20 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'customers');
       setToast({ message: 'Erro ao cadastrar cliente.', type: 'error' });
+    }
+  };
+
+  const handleUpdateCustomer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!showEditCustomerModal) return;
+    try {
+      const { id, ...data } = showEditCustomerModal;
+      await updateDoc(doc(db, 'customers', id), data);
+      setToast({ message: 'Cliente atualizado com sucesso!', type: 'success' });
+      setShowEditCustomerModal(null);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, 'customers');
+      setToast({ message: 'Erro ao atualizar cliente.', type: 'error' });
     }
   };
 
@@ -2302,17 +2317,18 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
                       {partners
+                        .filter(p => p.status !== 'cancelled')
                         .map(p => {
                           const pPoints = points.filter(pt => pt.partner_id === p.id && pt.status !== 'cancelled');
-                          const pRevenue = pPoints.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-                          const pExpense = pPoints.reduce((acc, curr) => acc + (curr.expense || 0), 0);
+                          const pRevenue = pPoints.reduce((acc, curr) => acc + (Number(curr.revenue) || 0), 0);
+                          const pExpense = pPoints.reduce((acc, curr) => acc + (Number(curr.expense) || 0), 0);
                           return { id: p.id, name: p.name, count: pPoints.length, revenue: pRevenue, expense: pExpense };
                         })
                         .sort((a, b) => b.revenue - a.revenue)
-                        .map((item) => {
+                        .map((item, idx) => {
                           const partnerObj = partners.find(p => p.id === item.id);
                           return (
-                            <tr key={item.id} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
+                            <tr key={`${item.id}-${idx}`} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
                               <td className="px-8 py-6">
                                 <div className="flex items-center gap-3">
                                   <PartnerLogo name={item.name} url={partnerObj?.logo_url} />
@@ -2359,8 +2375,8 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
-                      {monthlyStats.map((item) => (
-                        <tr key={item.month} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
+                      {monthlyStats.map((item, idx) => (
+                        <tr key={`${item.month}-${idx}`} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
                           <td className="px-8 py-6 font-bold text-neutral-text">{item.month}</td>
                           <td className="px-8 py-6 text-neutral-muted font-medium">{item.count}</td>
                           <td className="px-8 py-6 font-bold text-emerald-600">R$ {item.total_revenue.toLocaleString('pt-BR')}</td>
@@ -2488,6 +2504,13 @@ export default function App() {
                               </td>
                               <td className="px-10 py-8 text-right">
                                 <div className="flex justify-end gap-3">
+                                  <button
+                                    onClick={() => setShowEditCustomerModal(customer)}
+                                    className="p-4 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 dark:hover:bg-brand-accent/10 rounded-2xl transition-all hover:scale-110"
+                                    title="Editar Cliente"
+                                  >
+                                    <Edit2 size={22} />
+                                  </button>
                                   <button
                                     onClick={() => deleteCustomer(customer.id)}
                                     className="p-4 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-2xl transition-all hover:scale-110"
@@ -3030,7 +3053,7 @@ export default function App() {
                                   className="p-2.5 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 rounded-full transition-all"
                                   title="Editar Parceiro"
                                 >
-                                  <MoreVertical size={20} />
+                                  <Edit2 size={18} />
                                 </button>
                                 {partner.status === 'active' ? (
                                   <button 
@@ -3116,14 +3139,15 @@ export default function App() {
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="w-64">
                     <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-                      <SelectTrigger className="bg-white dark:bg-neutral-900 shadow-sm border-neutral-border dark:border-neutral-800 rounded-2xl h-12 text-[10px] uppercase font-black px-6">
-                        <SelectValue placeholder="SELECIONE O CLIENTE DESTINO" />
-                      </SelectTrigger>
-                      <SelectContent className="z-[10005] bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                        {customers.map(c => (
-                          <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                        ))}
-                      </SelectContent>
+                        <SelectTrigger className="bg-white dark:bg-neutral-900 shadow-xl border-neutral-border dark:border-neutral-800 rounded-2xl h-12 text-[10px] uppercase font-black px-6 hover:border-brand-accent/50 transition-all">
+                          <SelectValue placeholder="SELECIONE O CLIENTE DESTINO" />
+                        </SelectTrigger>
+                        <SelectContent className="z-[100005] bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
+                          <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
+                          {customers.map(c => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
                     </Select>
                   </div>
 
@@ -3259,18 +3283,25 @@ export default function App() {
                                 {point.status !== 'cancelled' ? (
                                   <>
                                     <button 
-                                      onClick={() => setShowReductionModal({id: point.id, currentCost: point.cost})}
-                                      className="p-2.5 text-neutral-muted hover:text-amber-600 hover:bg-amber-50 rounded-full transition-all"
-                                      title="Reduzir Valor"
+                                      onClick={() => setShowEditPointModal(point)}
+                                      className="p-2.5 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 rounded-full transition-all"
+                                      title="Editar Ponto"
                                     >
-                                      <ArrowDownCircle size={20} />
+                                      <Edit2 size={18} />
+                                    </button>
+                                    <button 
+                                      onClick={() => setShowReductionModal({id: point.id, currentCost: point.expense})}
+                                      className="p-2.5 text-neutral-muted hover:text-amber-600 hover:bg-amber-50 rounded-full transition-all"
+                                      title="Reduzir Despesa"
+                                    >
+                                      <ArrowDownCircle size={18} />
                                     </button>
                                     <button 
                                       onClick={() => handleCancelPoint(point.id)}
                                       className="p-2.5 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 rounded-full transition-all"
                                       title="Cancelar Contrato"
                                     >
-                                      <XCircle size={20} />
+                                      <XCircle size={18} />
                                     </button>
                                   </>
                                 ) : (
@@ -3279,7 +3310,7 @@ export default function App() {
                                     className="p-2.5 text-neutral-muted hover:text-emerald-600 hover:bg-emerald-50 rounded-full transition-all"
                                     title="Reativar Contrato"
                                   >
-                                    <CheckCircle2 size={20} />
+                                    <CheckCircle2 size={18} />
                                   </button>
                                 )}
                                 <button 
@@ -3287,7 +3318,7 @@ export default function App() {
                                   className="p-2.5 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 rounded-full transition-all"
                                   title="Excluir Permanentemente"
                                 >
-                                  <Trash2 size={20} />
+                                  <Trash2 size={18} />
                                 </button>
                               </div>
                             </td>
@@ -3338,7 +3369,11 @@ export default function App() {
                       <div className="p-8 bg-white/50 dark:bg-slate-900/10">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                           {(client.points || []).map(point => (
-                            <div key={point.id} className="p-6 rounded-[2.5rem] border border-neutral-border dark:border-white/5 bg-white dark:bg-slate-900/40 hover:border-brand-accent/50 transition-all hover:shadow-2xl hover:shadow-brand-accent/5 group/pt relative overflow-hidden active:scale-95">
+                            <div 
+                              key={point.id} 
+                              onClick={() => setShowEditPointModal(point)}
+                              className="p-6 rounded-[2.5rem] border border-neutral-border dark:border-white/5 bg-white dark:bg-slate-900/40 hover:border-brand-accent/50 transition-all hover:shadow-2xl hover:shadow-brand-accent/5 group/pt relative overflow-hidden active:scale-95 cursor-pointer"
+                            >
                               <div className="absolute top-0 right-0 p-4">
                                 <span className={cn(
                                   "text-[8px] font-black uppercase px-2.5 py-1 rounded-full tracking-tighter border shadow-sm",
@@ -3427,7 +3462,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 relative z-[201] ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
                           <SelectValue placeholder="Escolha um cliente..." />
                         </SelectTrigger>
-                        <SelectContent className="z-[10005] bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 scrollbar-hide">
+                        <SelectContent className="z-[100005] bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
                           <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id} className="font-bold">{c.name}</SelectItem>
@@ -3673,7 +3708,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                           <SelectValue placeholder="Selecione o Cliente" />
                         </SelectTrigger>
-                        <SelectContent className="z-[10005] bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
+                        <SelectContent className="z-[100002] bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                           ))}
@@ -4120,13 +4155,123 @@ export default function App() {
                   </form>
                 </>
               )}
+
+              {showEditCustomerModal && (
+                <>
+                  <div className="flex items-center justify-between mb-8">
+                    <div>
+                      <h3 className="text-2xl font-extrabold text-neutral-text font-display">Editar Dados do Cliente</h3>
+                      <p className="text-[10px] font-bold text-neutral-muted uppercase tracking-widest mt-1">Atualize as informações cadastrais</p>
+                    </div>
+                    <div className="w-12 h-12 rounded-2xl bg-brand-accent/10 flex items-center justify-center text-brand-accent border border-brand-accent/20">
+                      <Users size={24} />
+                    </div>
+                  </div>
+
+                  <form onSubmit={handleUpdateCustomer} className="space-y-5">
+                    <div className="grid grid-cols-2 gap-5">
+                      <div className="col-span-2">
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Razão Social / Nome Fantasia</label>
+                        <Input 
+                          required
+                          className="rounded-2xl py-6"
+                          value={showEditCustomerModal.name}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, name: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">CNPJ</label>
+                        <Input 
+                          className="rounded-2xl py-6"
+                          placeholder="00.000.000/0000-00"
+                          value={showEditCustomerModal.cnpj || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, cnpj: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Responsável / Contato</label>
+                        <Input 
+                          className="rounded-2xl py-6"
+                          value={showEditCustomerModal.contact || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, contact: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Telefone / WhatsApp</label>
+                        <Input 
+                          className="rounded-2xl py-6"
+                          value={showEditCustomerModal.phone || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, phone: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">E-mail para Faturamento</label>
+                        <Input 
+                          type="email"
+                          className="rounded-2xl py-6"
+                          value={showEditCustomerModal.email || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, email: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Endereço Sede</label>
+                      <Input 
+                        className="rounded-2xl py-6"
+                        value={showEditCustomerModal.address || ''}
+                        onChange={e => setShowEditCustomerModal({...showEditCustomerModal, address: e.target.value})}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-5">
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade</label>
+                        <Input 
+                          className="rounded-2xl py-6"
+                          value={showEditCustomerModal.city || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, city: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF (Estado)</label>
+                        <Input 
+                          maxLength={2}
+                          className="rounded-2xl py-6 uppercase"
+                          value={showEditCustomerModal.state || ''}
+                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, state: e.target.value.toUpperCase()})}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex gap-4 pt-4">
+                      <button 
+                        type="button"
+                        onClick={() => setShowEditCustomerModal(null)}
+                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all font-display uppercase tracking-widest text-xs"
+                      >
+                        Cancelar
+                      </button>
+                      <button 
+                        type="submit"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all font-display uppercase tracking-widest text-xs"
+                      >
+                        Aplicar Alterações
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
             </motion.div>
           </motion.div>
         )}
         {/* Expanded Map Modal */}
         <Dialog open={isMapExpanded} onOpenChange={setIsMapExpanded}>
           <DialogContent 
-            className="!fixed !inset-0 !z-[100000] !h-screen !w-screen !max-w-none !gap-0 !border-none !bg-white !p-0 !shadow-none !outline-none !translate-x-0 !translate-y-0 !transform-none dark:!bg-slate-950 !rounded-none !overflow-hidden !flex !flex-col !items-stretch"
+            className="!fixed !inset-0 !z-[100000] !m-0 !h-screen !w-screen !max-w-none !gap-0 !border-none !bg-white !p-0 !shadow-none !outline-none !translate-x-0 !translate-y-0 !transform-none dark:!bg-slate-950 !rounded-none !overflow-hidden !flex !flex-col !items-stretch"
             showCloseButton={false}
           >
             <div className="w-full h-full relative flex flex-col">
@@ -4142,10 +4287,10 @@ export default function App() {
               <div className="p-8 bg-white dark:bg-slate-900 border-b border-neutral-border dark:border-white/5 flex items-center justify-between z-[100000]">
                 <div>
                   <h3 className="text-2xl font-black text-neutral-text dark:text-white uppercase tracking-tighter">Visão Estratégica Regional</h3>
-                  <p className="text-[11px] text-neutral-muted font-bold uppercase tracking-[0.2em] leading-none mt-1.5 flex items-center gap-2">
+                  <div className="text-[11px] text-neutral-muted font-bold uppercase tracking-[0.2em] leading-none mt-1.5 flex items-center gap-2">
                     <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
                     Monitoramento Geográfico em Tempo Real
-                  </p>
+                  </div>
                 </div>
               </div>
               
@@ -4155,6 +4300,7 @@ export default function App() {
                     points={points} 
                     height="100%" 
                     onEditPoint={(p) => setShowEditPointModal(p)}
+                    refreshTrigger={isMapExpanded}
                   />
                 )}
               </div>
