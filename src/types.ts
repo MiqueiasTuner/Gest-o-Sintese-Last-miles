@@ -1,24 +1,27 @@
 export interface Partner {
-  id: number;
+  id: string;
   name: string;
   contact: string;
   state: string;
-  city: string;
+  cities: string;
+  logo_url?: string;
   status: string;
-  created_at: string;
+  created_at: any;
 }
 
 export interface Point {
-  id: number;
+  id: string;
+  customer_id?: string;
   customer_name: string;
   address: string;
   city: string;
   state: string;
-  partner_id: number;
+  partner_id: string;
   partner_name?: string;
-  cost: number;
+  revenue: number;
+  expense: number;
   status: string;
-  created_at: string;
+  created_at: any;
 }
 
 export interface Stats {

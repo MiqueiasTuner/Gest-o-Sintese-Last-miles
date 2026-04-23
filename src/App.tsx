@@ -1126,36 +1126,43 @@ export default function App() {
     reader.onload = async (event) => {
       const kmlText = event.target?.result as string;
       const parser = new DOMParser();
-      const kmlDoc = parser.parseFromString(kmlText, "text/xml");
-      const placemarks = kmlDoc.getElementsByTagName("Placemark");
-      
-      if (placemarks.length === 0) {
-        setToast({ message: 'Nenhum ponto encontrado no KML.', type: 'error' });
+      let kmlDoc;
+      try {
+        kmlDoc = parser.parseFromString(kmlText, "text/xml");
+      } catch (err) {
+        setToast({ message: 'Erro ao processar formato do arquivo KML.', type: 'error' });
         return;
       }
 
-      setToast({ message: `Processando ${placemarks.length} localizações...`, type: 'success' });
+      const placemarks = kmlDoc.getElementsByTagName("Placemark");
+      
+      if (placemarks.length === 0) {
+        setToast({ message: 'Nenhum ponto encontrado no arquivo KML.', type: 'error' });
+        return;
+      }
+
+      setToast({ message: `Iniciando processamento de ${placemarks.length} pontos...`, type: 'success' });
 
       try {
-        const batch = writeBatch(db);
         let importedCount = 0;
+        let batch = writeBatch(db);
+        let batchSize = 0;
 
         const customer = customers.find(c => c.id === selectedCustomerId);
         const finalCustomerName = customer?.name || 'Localização Importada';
+
+        // Helper to wait to avoid rate limits
+        const delay = (ms: number) => new Promise(res => setTimeout(res, ms));
 
         for (let i = 0; i < placemarks.length; i++) {
           const pm = placemarks[i];
           const name = pm.getElementsByTagName("name")[0]?.textContent || `Ponto Importado ${i+1}`;
           const coordsStr = pm.getElementsByTagName("coordinates")[0]?.textContent?.trim();
           
-          // Tenta extrair endereço das tags address ou description
-          const kmlAddress = pm.getElementsByTagName("address")[0]?.textContent || '';
-          
-          let address = kmlAddress || name;
+          let address = pm.getElementsByTagName("address")[0]?.textContent || name;
           let city = 'Localização Importada';
           let state = 'UF';
 
-          // Inteligência CNL/Sigla: Detecta cidade/estado pelo código no nome
           const sigla = extractSigla(name);
           if (sigla && CNL_MAPPING[sigla]) {
             city = CNL_MAPPING[sigla].city;
@@ -1172,31 +1179,44 @@ export default function App() {
               const lat = parseFloat(parts[1]);
               
               if (!isNaN(lat) && !isNaN(lng)) {
-                // Geocodificação Reversa Automática para pegar endereço real (Rua, Número, etc)
-                try {
-                  const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
-                    headers: { 'Accept-Language': 'pt-BR' }
-                  });
-                  const geo = await res.json();
-                  if (geo && geo.address) {
-                    address = geo.display_name || address;
-                    city = geo.address.city || geo.address.town || geo.address.suburb || city;
-                    state = geo.address.state_district || geo.address.state || state;
-                  }
-                } catch (err) {
-                  console.warn("Reverse geocode failed", err);
+                // Reverse geocoding limited to standard behavior to avoid extreme delay
+                // Only geocode first 10 or skip if too many to keep it usable
+                if (placemarks.length <= 15 || i < 5) {
+                   try {
+                     // Adding a small delay to avoid Nominatim blacklisting
+                     if (i > 0) await delay(1000); 
+                     
+                     const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`, {
+                       headers: { 'Accept-Language': 'pt-BR' }
+                     });
+                     const geo = await res.json();
+                     if (geo && geo.address) {
+                       address = geo.display_name || address;
+                       city = geo.address.city || geo.address.town || geo.address.suburb || city;
+                       state = geo.address.state_district || geo.address.state || state;
+                     }
+                   } catch (err) {
+                     console.warn("Reverse geocode failed for point", i);
+                   }
                 }
+
+                // Tenta encontrar um parceiro compatível automaticamente (Estado e Cidade coincidem)
+                const matchingPartner = partners.find(p => {
+                  if (!p.state || !p.cities) return false;
+                  const pState = p.state.toUpperCase();
+                  const pCities = p.cities.split(',').map(c => c.trim().toLowerCase());
+                  return pState === state.toUpperCase() && pCities.includes(city.toLowerCase());
+                });
 
                 const pointRef = doc(collection(db, 'points'));
                 batch.set(pointRef, {
                   customer_id: selectedCustomerId || 'pending',
                   customer_name: finalCustomerName,
-                  point_title: name, // Original name from KML
                   address,
                   city,
                   state,
-                  partner_id: 'pending',
-                  partner_name: 'Aguardando Vínculo',
+                  partner_id: matchingPartner?.id || 'pending',
+                  partner_name: matchingPartner?.name || 'Aguardando Vínculo',
                   revenue: 0,
                   expense: 0,
                   status: 'pending',
@@ -1204,22 +1224,39 @@ export default function App() {
                   lng,
                   created_at: Timestamp.now()
                 });
+                
                 importedCount++;
+                batchSize++;
+
+                // Commit batch every 400 items (Firestore limit is 500)
+                if (batchSize >= 400) {
+                  await batch.commit();
+                  batch = writeBatch(db);
+                  batchSize = 0;
+                }
               }
             }
           }
+          
+          // Small visual feedback for large imports
+          if (i > 0 && i % 20 === 0) {
+            setToast({ message: `Importando... ${i}/${placemarks.length} concluídos`, type: 'success' });
+          }
+        }
+
+        if (batchSize > 0) {
+          await batch.commit();
         }
 
         if (importedCount > 0) {
-          await batch.commit();
-          setToast({ message: `${importedCount} pontos importados com endereços atualizados!`, type: 'success' });
+          setToast({ message: `${importedCount} pontos importados com sucesso!`, type: 'success' });
           if (kmlInputRef.current) kmlInputRef.current.value = '';
         } else {
-          setToast({ message: 'Nenhum ponto válido com coordenadas encontrado.', type: 'error' });
+          setToast({ message: 'Nenhum ponto válido com coordenadas foi encontrado.', type: 'error' });
         }
       } catch (error) {
         console.error("Erro importando KML:", error);
-        setToast({ message: 'Erro ao processar o arquivo KML.', type: 'error' });
+        setToast({ message: 'Erro crítico ao processar importação.', type: 'error' });
       }
     };
     reader.readAsText(file);
@@ -3237,7 +3274,7 @@ export default function App() {
                         <SelectTrigger className="bg-white dark:bg-neutral-900 shadow-xl border-neutral-border dark:border-neutral-800 rounded-2xl h-12 text-[10px] uppercase font-black px-6 hover:border-brand-accent/50 transition-all">
                           <SelectValue placeholder="SELECIONE O CLIENTE DESTINO" />
                         </SelectTrigger>
-                        <SelectContent className="z-[100005] bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
+                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
                           <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
@@ -3270,15 +3307,6 @@ export default function App() {
                   >
                     <Globe size={14} />
                     Importar KML
-                  </button>
-
-                  <button 
-                    onClick={handleResetPoints}
-                    className="flex items-center gap-2.5 px-6 py-2.5 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-[10px] font-black uppercase tracking-widest text-rose-500 hover:bg-rose-50 hover:text-white transition-all shadow-sm"
-                    title="Limpar todos os pontos"
-                  >
-                    <Trash2 size={14} />
-                    Limpar
                   </button>
 
                   <div className="flex gap-1 bg-neutral-bg dark:bg-neutral-900 p-1 rounded-2xl border border-neutral-border dark:border-neutral-800">
@@ -3557,7 +3585,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 relative z-[201] ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
                           <SelectValue placeholder="Escolha um cliente..." />
                         </SelectTrigger>
-                        <SelectContent className="z-[100005] bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
+                        <SelectContent className="bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
                           <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id} className="font-bold">{c.name}</SelectItem>
@@ -3585,7 +3613,13 @@ export default function App() {
                         }}
                       />
                       <button 
-                        onClick={() => document.getElementById('kml-upload')?.click()}
+                        onClick={() => {
+                          if (!selectedCustomerId || selectedCustomerId === '') {
+                            setToast({ message: 'Por favor, selecione um cliente antes de escolher o arquivo.', type: 'error' });
+                            return;
+                          }
+                          document.getElementById('kml-upload')?.click();
+                        }}
                         className="w-full px-6 py-4 rounded-2xl bg-brand-accent text-white font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
                       >
                         Selecionar Arquivos
@@ -3803,7 +3837,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                           <SelectValue placeholder="Selecione o Cliente" />
                         </SelectTrigger>
-                        <SelectContent className="z-[100002] bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
+                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                           ))}
@@ -4141,7 +4175,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                           <SelectValue placeholder="Selecione o Cliente..." />
                         </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 z-[10002]">
+                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
                           {customers.map(c => (
                             <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                           ))}
@@ -4171,7 +4205,7 @@ export default function App() {
                           <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                             <SelectValue placeholder="Selecione o Parceiro..." />
                           </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 z-[10002]">
+                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
                             {partners.map(p => (
                               <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                             ))}
@@ -4240,7 +4274,7 @@ export default function App() {
                         <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                           <SelectValue placeholder="Status..." />
                         </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 z-[10002]">
+                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
                           <SelectItem value="pending">Pendente</SelectItem>
                           <SelectItem value="completed">Ativo / Concluído</SelectItem>
                           <SelectItem value="cancelled">Cancelado / Inativo</SelectItem>
