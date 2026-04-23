@@ -214,6 +214,7 @@ interface Customer {
   address?: string;
   city?: string;
   state?: string;
+  color?: string;
   created_at: any;
 }
 
@@ -319,7 +320,57 @@ const MapResizer = ({ points, refreshTrigger }: { points: Point[], refreshTrigge
   return null;
 };
 
-const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refreshTrigger }: { points: Point[], height?: string, onExpand?: () => void, onEditPoint?: (p: Point) => void, refreshTrigger?: any }) => {
+const MAP_COLORS = [
+  { name: 'Azul', value: '#2563eb' },
+  { name: 'Esmeralda', value: '#10b981' },
+  { name: 'Âmbar', value: '#f59e0b' },
+  { name: 'Rosa', value: '#f43f5e' },
+  { name: 'Índigo', value: '#6366f1' },
+  { name: 'Violeta', value: '#8b5cf6' },
+  { name: 'Laranja', value: '#f97316' },
+  { name: 'Ciano', value: '#06b6d4' },
+  { name: 'Fúcsia', value: '#d946ef' },
+];
+
+const createCustomIcon = (color: string) => {
+  return L.divIcon({
+    className: 'custom-div-icon',
+    html: `
+      <div style="
+        background-color: ${color};
+        width: 30px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50% 50% 50% 0;
+        transform: rotate(-45deg);
+        border: 2px solid white;
+        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+      ">
+        <div style="
+          width: 8px;
+          height: 8px;
+          background-color: white;
+          border-radius: 50%;
+          transform: rotate(45deg);
+        "></div>
+      </div>
+    `,
+    iconSize: [30, 30],
+    iconAnchor: [15, 30],
+    popupAnchor: [0, -30],
+  });
+};
+
+const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refreshTrigger, customers = [] }: { 
+  points: Point[], 
+  height?: string, 
+  onExpand?: () => void, 
+  onEditPoint?: (p: Point) => void, 
+  refreshTrigger?: any,
+  customers?: Customer[] 
+}) => {
   const [mapStyle, setMapStyle] = useState<'streets' | 'satellite'>('streets');
   const center: [number, number] = [-15.7801, -47.9292]; // Brasília center
 
@@ -375,11 +426,16 @@ const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refresh
           url={mapStyle === 'streets' ? streetsUrl : satelliteUrl}
         />
         <MapResizer points={points} refreshTrigger={refreshTrigger || height} />
-        {points.map((point) => (
-          point.lat && point.lng ? (
+        {points.map((point) => {
+          const customer = customers.find(c => c.id === point.customer_id);
+          const iconColor = customer?.color || '#2563eb';
+          const markerIcon = createCustomIcon(iconColor);
+
+          return point.lat && point.lng ? (
             <Marker 
               key={point.id} 
               position={[point.lat, point.lng]}
+              icon={markerIcon}
               eventHandlers={{
                 click: () => {
                   if (onEditPoint) {
@@ -419,7 +475,7 @@ const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refresh
               </Popup>
             </Marker>
           ) : null
-        ))}
+        })}
       </MapContainer>
     </div>
   );
@@ -645,7 +701,8 @@ export default function App() {
     email: '', 
     address: '', 
     city: '', 
-    state: '' 
+    state: '',
+    color: '#2563eb'
   });
   const [newPoint, setNewPoint] = useState({ 
     customer_id: '',
@@ -952,9 +1009,29 @@ export default function App() {
     } catch (error: any) {
       console.error("Google Auth Error:", error.code, error.message);
       if (error.code === 'auth/unauthorized-domain') {
-        setLoginError("Este domínio não está autorizado no Firebase Console para login com Google.");
+        const domain = window.location.hostname;
+        setLoginError((
+          <div className="flex flex-col gap-3">
+            <p>Domínio não autorizado. Adicione o domínio abaixo no seu Firebase Console (Authentication {'>'} Settings {'>'} Authorized domains).</p>
+            <div className="flex items-center gap-2 p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
+              <code className="text-[10px] font-mono flex-1 truncate">{domain}</code>
+              <button 
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigator.clipboard.writeText(domain);
+                  setToast({ message: 'Domínio copiado!', type: 'success' });
+                }}
+                className="px-3 py-1 bg-rose-600 text-[10px] text-white rounded-lg hover:bg-rose-700 transition-all font-bold uppercase tracking-widest"
+              >
+                Copiar
+              </button>
+            </div>
+          </div>
+        ) as any);
       } else if (error.code === 'auth/popup-closed-by-user') {
         // Silently ignore
+      } else if (error.code === 'auth/invalid-credential') {
+        setLoginError("Configuração de credenciais inválida. Verifique se o login com Google está ativado no Firebase Console.");
       } else {
         setLoginError(`Erro ao entrar com Google (${error.code})`);
       }
@@ -1166,7 +1243,8 @@ export default function App() {
         email: '', 
         address: '', 
         city: '', 
-        state: '' 
+        state: '',
+        color: '#2563eb'
       });
     } catch (error) {
       handleFirestoreError(error, OperationType.CREATE, 'customers');
@@ -2052,6 +2130,7 @@ export default function App() {
                     <div className="h-[400px]">
                       <MapComponent 
                         points={points} 
+                        customers={customers}
                         onExpand={() => { setExpandedMapPoints([]); setIsMapExpanded(true); }} 
                         onEditPoint={(p) => setShowEditPointModal(p)}
                       />
@@ -2593,6 +2672,7 @@ export default function App() {
                       <div className="h-full">
                         <MapComponent 
                           points={activeCustomerFilter ? points.filter(p => p.customer_id === activeCustomerFilter || p.customer_name === customers.find(c => c.id === activeCustomerFilter)?.name) : points} 
+                          customers={customers}
                           height="100%"
                           onEditPoint={(p) => setShowEditPointModal(p)}
                         />
@@ -2922,6 +3002,7 @@ export default function App() {
                     </div>
                     <MapComponent 
                       points={points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id))} 
+                      customers={customers}
                       height="300px" 
                       onExpand={() => {
                         setExpandedMapPoints(points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id)));
@@ -3986,6 +4067,25 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div>
+                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cor do Identificador no Mapa</label>
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {MAP_COLORS.map(c => (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => setNewCustomer({...newCustomer, color: c.value})}
+                            className={cn(
+                              "w-8 h-8 rounded-full border-2 transition-all hover:scale-110 shadow-sm",
+                              newCustomer.color === c.value ? "border-brand-accent scale-110" : "border-transparent"
+                            )}
+                            style={{ backgroundColor: c.value }}
+                            title={c.name}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
                     <div className="flex gap-4 pt-4">
                       <button 
                         type="button"
@@ -4247,6 +4347,25 @@ export default function App() {
                       </div>
                     </div>
 
+                    <div>
+                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cor do Identificador no Mapa</label>
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {MAP_COLORS.map(c => (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => setShowEditCustomerModal({...showEditCustomerModal, color: c.value})}
+                            className={cn(
+                              "w-8 h-8 rounded-full border-2 transition-all hover:scale-110 shadow-sm",
+                              showEditCustomerModal.color === c.value ? "border-brand-accent scale-110" : "border-transparent"
+                            )}
+                            style={{ backgroundColor: c.value }}
+                            title={c.name}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
                     <div className="flex gap-4 pt-4">
                       <button 
                         type="button"
@@ -4298,6 +4417,7 @@ export default function App() {
                 {isMapExpanded && (
                   <MapComponent 
                     points={points} 
+                    customers={customers}
                     height="100%" 
                     onEditPoint={(p) => setShowEditPointModal(p)}
                     refreshTrigger={isMapExpanded}

@@ -25,7 +25,8 @@ service cloud.firestore {
     //   - state: string (required, 2 chars)
     //   - partner_id: string (required, reference to partners)
     //   - partner_name: string (optional, denormalized)
-    //   - cost: number (required, >= 0)
+    //   - revenue: number (required, >= 0)
+    //   - expense: number (required, >= 0)
     //   - status: string (required, enum: ['pending', 'completed', 'cancelled'])
     //   - payment_status: string (optional, enum: ['pending', 'paid'])
     //   - sla_status: string (optional, enum: ['within', 'warning', 'breached'])
@@ -56,6 +57,10 @@ service cloud.firestore {
       return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
     }
 
+    function isValidColor(color) {
+      return color is string && color.matches("^#[0-9a-fA-F]{6}$");
+    }
+
     // --- Partner Validation ---
     function isValidPartner(data) {
       return data.keys().hasAll(['name', 'contact', 'state', 'status']) &&
@@ -70,13 +75,14 @@ service cloud.firestore {
 
     // --- Point Validation ---
     function isValidPoint(data) {
-      return data.keys().hasAll(['customer_name', 'address', 'city', 'state', 'partner_id', 'cost', 'status']) &&
+      return data.keys().hasAll(['customer_name', 'address', 'city', 'state', 'partner_id', 'revenue', 'expense', 'status']) &&
              data.customer_name is string && data.customer_name.size() > 0 && data.customer_name.size() <= 100 &&
              data.address is string && data.address.size() > 0 && data.address.size() <= 200 &&
              data.city is string && data.city.size() > 0 && data.city.size() <= 100 &&
              data.state is string && data.state.size() == 2 &&
              data.partner_id is string &&
-             data.cost is number && data.cost >= 0 &&
+             data.revenue is number && data.revenue >= 0 &&
+             data.expense is number && data.expense >= 0 &&
              data.status in ['pending', 'completed', 'cancelled'] &&
              (!('customer_id' in data) || data.customer_id is string) &&
              (!('payment_status' in data) || data.payment_status in ['pending', 'paid']) &&
@@ -93,7 +99,8 @@ service cloud.firestore {
              (!('email' in data) || (data.email == "" || isValidEmail(data.email))) &&
              (!('address' in data) || data.address is string) &&
              (!('city' in data) || data.city is string) &&
-             (!('state' in data) || (data.state is string && data.state.size() <= 2));
+             (!('state' in data) || (data.state is string && data.state.size() <= 6)) &&
+             (!('color' in data) || isValidColor(data.color));
     }
 
     // ===============================================================
