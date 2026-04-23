@@ -27,7 +27,8 @@
         "state": { "type": "string", "description": "State (UF)" },
         "partner_id": { "type": "string", "description": "ID of the responsible partner" },
         "partner_name": { "type": "string", "description": "Denormalized partner name" },
-        "cost": { "type": "number", "description": "Operational cost" },
+        "revenue": { "type": "number", "description": "Client billing amount" },
+        "expense": { "type": "number", "description": "Partner cost amount" },
         "status": { "type": "string", "enum": ["pending", "completed", "cancelled"], "description": "Contract status" },
         "payment_status": { "type": "string", "enum": ["pending", "paid"], "description": "Financial status" },
         "sla_status": { "type": "string", "enum": ["within", "warning", "breached"], "description": "Current SLA status" },
@@ -35,7 +36,7 @@
         "bandwidth": { "type": "string", "description": "Contracted bandwidth" },
         "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
       },
-      "required": ["customer_name", "address", "city", "state", "partner_id", "cost", "status"]
+      "required": ["customer_name", "address", "city", "state", "partner_id", "revenue", "expense", "status"]
     },
     "Customer": {
       "title": "Customer",
@@ -50,9 +51,23 @@
         "address": { "type": "string", "description": "Business headquarters address" },
         "city": { "type": "string", "description": "Headquarters city" },
         "state": { "type": "string", "description": "Headquarters state (UF)" },
+        "color": { "type": "string", "description": "HEX color for markers" },
         "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
       },
       "required": ["name"]
+    },
+    "Event": {
+      "title": "Event",
+      "description": "System event or log entry (e.g. SLA incident).",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "description": "Event classification" },
+        "partner_id": { "type": "string", "description": "Associated partner ID" },
+        "partner_name": { "type": "string", "description": "Denormalized partner name" },
+        "description": { "type": "string", "description": "Details about the event" },
+        "created_at": { "type": "string", "format": "date-time", "description": "Creation timestamp" }
+      },
+      "required": ["type", "partner_id", "description", "created_at"]
     }
   },
   "firestore": {
@@ -67,6 +82,10 @@
     "/customers/{customerId}": {
       "schema": "Customer",
       "description": "Collection of corporate customers"
+    },
+    "/events/{eventId}": {
+      "schema": "Event",
+      "description": "Collection of system events and logs"
     }
   }
 }

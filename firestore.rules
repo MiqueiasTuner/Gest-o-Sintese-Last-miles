@@ -46,7 +46,8 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email == "miqueiasyout@gmail.com" && request.auth.token.email_verified == true);
+        (request.auth.token.email in ["miqueiasyout@gmail.com", "miqueiasyy@gmail.com"]) &&
+        request.auth.token.email_verified == true;
     }
 
     function isValidEmail(email) {
@@ -103,6 +104,15 @@ service cloud.firestore {
              (!('color' in data) || isValidColor(data.color));
     }
 
+    // --- Event Validation ---
+    function isValidEvent(data) {
+      return data.keys().hasAll(['type', 'partner_id', 'description', 'created_at']) &&
+             data.type is string &&
+             data.partner_id is string &&
+             data.description is string &&
+             data.created_at == request.time;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -130,6 +140,12 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidCustomer(request.resource.data);
       allow update: if isAdmin() && isValidCustomer(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /events/{eventId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidEvent(request.resource.data);
       allow delete: if isAdmin();
     }
   }

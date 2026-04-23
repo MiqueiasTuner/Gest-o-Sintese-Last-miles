@@ -39,8 +39,6 @@ import {
   Lock,
   Maximize2,
   Minimize2,
-  Sun,
-  Moon,
   Edit2
 } from 'lucide-react';
 import Papa from 'papaparse';
@@ -654,22 +652,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'partners' | 'points' | 'clients' | 'reports' | 'finance' | 'feasibility'>('dashboard');
-  const [darkMode, setDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('darkMode') === 'true';
-    }
-    return false;
-  });
-
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-    localStorage.setItem('darkMode', darkMode.toString());
-  }, [darkMode]);
-
+  
   const [partners, setPartners] = useState<Partner[]>([]);
   const [points, setPoints] = useState<Point[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -718,6 +701,25 @@ export default function App() {
     equipment: '',
     bandwidth: ''
   });
+
+  // --- Currency Helpers ---
+  const formatCurrency = (value: number | string) => {
+    const amount = typeof value === 'number' ? value : parseFloat(value.replace(/[^\d]/g, '')) / 100;
+    if (isNaN(amount)) return 'R$ 0,00';
+    return amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  };
+
+  const handleCurrencyInput = (value: string, setter: (val: number) => void) => {
+    // Se o valor contiver uma vírgula ou ponto no final, ignoramos para permitir a digitação decimal
+    // Mas a lógica padrão de máscara de moeda funciona multiplicando/dividindo por 100
+    const digits = value.replace(/\D/g, '');
+    const amount = parseInt(digits || '0') / 100;
+    
+    // Inteligência adicional: se o usuário colar um valor grande sem formatação (ex: 25000), 
+    // a máscara padrão transformaria em 250,00. 
+    // Porém, em máscaras de entrada em tempo real, o comportamento esperado é o preenchimento da direita para a esquerda.
+    setter(amount);
+  };
   const [partnerFilter, setPartnerFilter] = useState<'active' | 'cancelled'>('active');
   const [pointFilter, setPointFilter] = useState<'active' | 'cancelled'>('active');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -805,6 +807,20 @@ export default function App() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [financeValidationFilter, setFinanceValidationFilter] = useState<'all' | 'pending' | 'approved' | 'rejected'>('all');
   const [financeMonth, setFinanceMonth] = useState(new Date().toISOString().substring(0, 7));
+  
+  const financeMonths = useMemo(() => {
+    const months = [];
+    const now = new Date();
+    // Gera os últimos 12 meses dinamicamente
+    for (let i = 0; i < 12; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      months.push({
+        value: d.toISOString().substring(0, 7),
+        label: d.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })
+      });
+    }
+    return months;
+  }, []);
   const [reportingIncidentPartnerId, setReportingIncidentPartnerId] = useState<string | null>(null);
   const [incidentDescription, setIncidentDescription] = useState('');
   const [activePointsSubTab, setActivePointsSubTab] = useState<'list' | 'groups'>('list');
@@ -1011,21 +1027,25 @@ export default function App() {
       if (error.code === 'auth/unauthorized-domain') {
         const domain = window.location.hostname;
         setLoginError((
-          <div className="flex flex-col gap-3">
-            <p>Domínio não autorizado. Adicione o domínio abaixo no seu Firebase Console (Authentication {'>'} Settings {'>'} Authorized domains).</p>
-            <div className="flex items-center gap-2 p-3 bg-rose-500/10 rounded-xl border border-rose-500/20">
-              <code className="text-[10px] font-mono flex-1 truncate">{domain}</code>
-              <button 
-                onClick={(e) => {
-                  e.stopPropagation();
-                  navigator.clipboard.writeText(domain);
-                  setToast({ message: 'Domínio copiado!', type: 'success' });
-                }}
-                className="px-3 py-1 bg-rose-600 text-[10px] text-white rounded-lg hover:bg-rose-700 transition-all font-bold uppercase tracking-widest"
-              >
-                Copiar
-              </button>
+          <div className="flex flex-col gap-4 text-left p-4 bg-rose-50 rounded-2xl border border-rose-100 mt-2">
+            <div className="flex items-center gap-3 text-rose-600">
+              <AlertTriangle size={20} />
+              <p className="text-sm font-bold">Domínio não autorizado</p>
             </div>
+            <p className="text-xs text-neutral-muted leading-relaxed">
+              O acesso a partir deste endereço ({domain}) não está autorizado no Firebase. 
+              Copie o domínio e adicione-o às configurações de autenticação.
+            </p>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                navigator.clipboard.writeText(domain);
+                setToast({ message: 'Domínio copiado!', type: 'success' });
+              }}
+              className="w-full py-2 bg-rose-600 text-[10px] text-white rounded-xl hover:bg-rose-700 transition-all font-bold uppercase tracking-widest shadow-sm"
+            >
+              Copiar Domínio
+            </button>
           </div>
         ) as any);
       } else if (error.code === 'auth/popup-closed-by-user') {
@@ -1338,7 +1358,8 @@ export default function App() {
         city: '', 
         state: '', 
         partner_id: '', 
-        cost: 0, 
+        revenue: 0,
+        expense: 0,
         status: 'pending',
         sla_status: 'within',
         equipment: '',
@@ -1491,8 +1512,8 @@ export default function App() {
     e.preventDefault();
     if (!showReductionModal) return;
     try {
-      const newCost = showReductionModal.currentCost - reductionValue;
-      await updateDoc(doc(db, 'points', showReductionModal.id), { cost: newCost });
+      const newExpense = showReductionModal.currentCost - reductionValue;
+      await updateDoc(doc(db, 'points', showReductionModal.id), { expense: newExpense });
       setToast({ message: 'Redução aplicada com sucesso!', type: 'success' });
       setShowReductionModal(null);
       setReductionValue(0);
@@ -1888,14 +1909,7 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-3">
-            <button 
-              onClick={() => setDarkMode(!darkMode)}
-              className="p-2 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 rounded-full transition-all"
-              title={darkMode ? "Ativar Modo Claro" : "Ativar Modo Escuro"}
-            >
-              {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-            </button>
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-neutral-bg dark:bg-neutral-800 border border-neutral-border dark:border-neutral-700 rounded-full">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-neutral-bg border border-neutral-border rounded-full">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
               <span className="text-[10px] font-bold text-neutral-muted uppercase tracking-wider">Live</span>
             </div>
@@ -2151,19 +2165,19 @@ export default function App() {
                   <div className="h-64 sm:h-80">
                     <ResponsiveContainer width="100%" height="100%">
                       <BarChart data={stats.pointsByState}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f1f5f9'} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
                         <XAxis dataKey="state" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <Tooltip 
-                          cursor={{ fill: darkMode ? '#1e293b' : '#f8fafc', opacity: 0.4 }}
+                          cursor={{ fill: '#f8fafc', opacity: 0.4 }}
                           contentStyle={{ 
-                            backgroundColor: darkMode ? '#0f172a' : '#fff', 
+                            backgroundColor: '#fff', 
                             borderRadius: '12px', 
-                            border: darkMode ? '1px solid #1e293b' : '1px solid #e2e8f0', 
+                            border: '1px solid #e2e8f0', 
                             boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: darkMode ? '#f1f5f9' : '#111827'
+                            color: '#111827'
                           }}
-                          itemStyle={{ color: darkMode ? '#f1f5f9' : '#111827' }}
+                          itemStyle={{ color: '#111827' }}
                         />
                         <Bar dataKey="count" fill="#2563eb" radius={[6, 6, 0, 0]} barSize={40} />
                       </BarChart>
@@ -2190,18 +2204,18 @@ export default function App() {
                           revenue: pRevenue
                         };
                       }).sort((a, b) => b.expense - a.expense).slice(0, 6)}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#334155' : '#f1f5f9'} vertical={false} />
+                        <CartesianGrid strokeDasharray="3 3" stroke={'#f1f5f9'} vertical={false} />
                         <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} fontWeight="bold" tickLine={false} axisLine={false} />
                         <YAxis stroke="#94a3b8" fontSize={10} fontWeight="bold" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`} />
                         <Tooltip 
                           contentStyle={{ 
-                            backgroundColor: darkMode ? '#0f172a' : '#fff', 
+                            backgroundColor: '#fff', 
                             borderRadius: '12px', 
-                            border: darkMode ? '1px solid #1e293b' : '1px solid #e2e8f0', 
+                            border: '1px solid #e2e8f0', 
                             boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: darkMode ? '#f1f5f9' : '#111827'
+                            color: '#111827'
                           }}
-                          itemStyle={{ color: darkMode ? '#f1f5f9' : '#111827' }}
+                          itemStyle={{ color: '#111827' }}
                         />
                         <Bar dataKey="revenue" name="Receita" fill="#10b981" radius={[6, 6, 0, 0]} barSize={20} />
                         <Bar dataKey="expense" name="Despesa" fill="#ef4444" radius={[6, 6, 0, 0]} barSize={20} />
@@ -2328,18 +2342,18 @@ export default function App() {
                             <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f1f5f9'} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
                         <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <Tooltip 
                           contentStyle={{ 
-                            backgroundColor: darkMode ? '#0f172a' : '#fff', 
+                            backgroundColor: '#fff', 
                             borderRadius: '12px', 
-                            border: darkMode ? '1px solid #1e293b' : '1px solid #e2e8f0', 
+                            border: '1px solid #e2e8f0', 
                             boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: darkMode ? '#f1f5f9' : '#111827'
+                            color: '#111827'
                           }}
-                          itemStyle={{ color: darkMode ? '#f1f5f9' : '#111827' }}
+                          itemStyle={{ color: '#111827' }}
                         />
                         <Area type="monotone" dataKey="count" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
                       </AreaChart>
@@ -2357,22 +2371,22 @@ export default function App() {
                     <div className="h-80">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={monthlyStats}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={darkMode ? '#334155' : '#f1f5f9'} />
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
                           <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                           <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                           <Tooltip 
                             contentStyle={{ 
-                              backgroundColor: darkMode ? '#0f172a' : '#fff', 
+                              backgroundColor: '#fff', 
                               borderRadius: '12px', 
-                              border: darkMode ? '1px solid #1e293b' : '1px solid #e2e8f0', 
+                              border: '1px solid #e2e8f0', 
                               boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                              color: darkMode ? '#f1f5f9' : '#111827'
+                              color: '#111827'
                             }}
-                            itemStyle={{ color: darkMode ? '#f1f5f9' : '#111827' }}
+                            itemStyle={{ color: '#111827' }}
                           />
-                          <Line type="monotone" dataKey="total_revenue" name="Receita" stroke="#10b981" strokeWidth={4} dot={{ r: 6, fill: '#10b981', strokeWidth: 2, stroke: darkMode ? '#0f172a' : '#fff' }} />
-                          <Line type="monotone" dataKey="total_expense" name="Despesa" stroke="#f59e0b" strokeWidth={4} dot={{ r: 6, fill: '#f59e0b', strokeWidth: 2, stroke: darkMode ? '#0f172a' : '#fff' }} />
-                          <Line type="monotone" dataKey="profit" name="Lucro" stroke="#6366f1" strokeWidth={4} dot={{ r: 6, fill: '#6366f1', strokeWidth: 2, stroke: darkMode ? '#0f172a' : '#fff' }} />
+                          <Line type="monotone" dataKey="total_revenue" name="Receita" stroke="#10b981" strokeWidth={4} dot={{ r: 6, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} />
+                          <Line type="monotone" dataKey="total_expense" name="Despesa" stroke="#f59e0b" strokeWidth={4} dot={{ r: 6, fill: '#f59e0b', strokeWidth: 2, stroke: '#fff' }} />
+                          <Line type="monotone" dataKey="profit" name="Lucro" stroke="#6366f1" strokeWidth={4} dot={{ r: 6, fill: '#6366f1', strokeWidth: 2, stroke: '#fff' }} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -2697,26 +2711,26 @@ export default function App() {
                 </div>
                 
                 <div className="flex items-center gap-4">
-                  <div className="flex gap-1 bg-neutral-bg dark:bg-slate-900/50 p-1 rounded-2xl border border-neutral-border dark:border-white/5">
-                    {['2024-01', '2024-02', '2024-03', '2024-04'].map(month => (
+                  <div className="flex flex-wrap gap-1 bg-neutral-bg p-1 rounded-2xl border border-neutral-border">
+                    {financeMonths.slice(0, 6).reverse().map(m => (
                       <button 
-                        key={month}
-                        onClick={() => setFinanceMonth(month)}
+                        key={m.value}
+                        onClick={() => setFinanceMonth(m.value)}
                         className={cn(
                           "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all",
-                          financeMonth === month 
-                            ? "bg-white dark:bg-slate-800 text-brand-accent shadow-sm" 
+                          financeMonth === m.value 
+                            ? "bg-white text-brand-accent shadow-sm" 
                             : "text-neutral-muted hover:text-neutral-text"
                         )}
                       >
-                        {new Date(month + '-01').toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '')}
+                        {new Date(m.value + '-02').toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' }).replace('.', '')}
                       </button>
                     ))}
                   </div>
                   
-                  <div className="w-px h-8 bg-neutral-border dark:bg-white/5" />
+                  <div className="w-px h-8 bg-neutral-border" />
 
-                  <div className="flex gap-1 bg-neutral-bg dark:bg-slate-900/50 p-1 rounded-full border border-neutral-border dark:border-white/5">
+                  <div className="flex gap-1 bg-neutral-bg p-1 rounded-full border border-neutral-border">
                     {['all', 'pending', 'approved', 'rejected'].map((filter) => (
                       <button 
                         key={filter}
@@ -3895,22 +3909,20 @@ export default function App() {
                         <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Receita Mensal (Venda R$)</label>
                         <Input 
                           required
-                          type="number"
-                          step="0.01"
                           className="rounded-2xl py-6"
-                          value={newPoint.revenue}
-                          onChange={e => setNewPoint({...newPoint, revenue: Number(e.target.value)})}
+                          placeholder="R$ 0,00"
+                          value={formatCurrency(newPoint.revenue)}
+                          onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, revenue: val}))}
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Despesa Mensal (Custo R$)</label>
                         <Input 
                           required
-                          type="number"
-                          step="0.01"
                           className="rounded-2xl py-6"
-                          value={newPoint.expense}
-                          onChange={e => setNewPoint({...newPoint, expense: Number(e.target.value)})}
+                          placeholder="R$ 0,00"
+                          value={formatCurrency(newPoint.expense)}
+                          onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, expense: val}))}
                         />
                       </div>
                     </div>
@@ -3957,14 +3969,13 @@ export default function App() {
                       <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Valor do Desconto (R$)</label>
                       <Input 
                         required
-                        type="number"
-                        step="0.01"
                         autoFocus
                         className="rounded-2xl py-6"
-                        value={reductionValue}
-                        onChange={e => setReductionValue(Number(e.target.value))}
+                        placeholder="R$ 0,00"
+                        value={formatCurrency(reductionValue)}
+                        onChange={e => handleCurrencyInput(e.target.value, setReductionValue)}
                       />
-                      <p className="text-[10px] font-bold text-brand-accent mt-3 uppercase tracking-widest">Novo custo operacional: R$ {(showReductionModal.currentCost - reductionValue).toLocaleString('pt-BR')}</p>
+                      <p className="text-[10px] font-bold text-brand-accent mt-3 uppercase tracking-widest">Novo custo operacional: R$ {(showReductionModal.currentCost - reductionValue).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}</p>
                     </div>
                     <div className="flex gap-4 pt-6">
                       <button 
@@ -4203,19 +4214,19 @@ export default function App() {
                       <div>
                         <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Receita (Venda R$)</label>
                         <Input 
-                          type="number"
                           className="rounded-2xl py-6"
-                          value={showEditPointModal.revenue}
-                          onChange={e => setShowEditPointModal({...showEditPointModal, revenue: Number(e.target.value)})}
+                          placeholder="R$ 0,00"
+                          value={formatCurrency(showEditPointModal.revenue)}
+                          onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, revenue: val}))}
                         />
                       </div>
                       <div>
                         <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Despesa (Custo R$)</label>
                         <Input 
-                          type="number"
                           className="rounded-2xl py-6"
-                          value={showEditPointModal.expense}
-                          onChange={e => setShowEditPointModal({...showEditPointModal, expense: Number(e.target.value)})}
+                          placeholder="R$ 0,00"
+                          value={formatCurrency(showEditPointModal.expense)}
+                          onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, expense: val}))}
                         />
                       </div>
                     </div>
