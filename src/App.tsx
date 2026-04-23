@@ -58,11 +58,10 @@ import {
   AreaChart,
   Area
 } from 'recharts';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
-import L from 'leaflet';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
+import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
 import { Calendar as CalendarComponent } from "./components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
 import { Switch } from "./components/ui/switch";
@@ -77,19 +76,6 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "./components/ui/select";
-
-// Fix Leaflet icon issue
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-
-let DefaultIcon = L.icon({
-    iconUrl: icon,
-    shadowUrl: iconShadow,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41]
-});
-
-L.Marker.prototype.options.icon = DefaultIcon;
 
 import { cn } from './lib/utils';
 import { db, auth } from './lib/firebase';
@@ -226,6 +212,26 @@ interface MonthlyStat {
 
 // --- Components ---
 
+// --- Helpers ---
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+
+const ProgressBar = ({ progress, label, current, total }: { progress: number, label: string, current?: number, total?: number }) => (
+  <div className="w-full space-y-2">
+    <div className="flex justify-between items-end">
+      <p className="text-[10px] font-black uppercase tracking-widest text-neutral-muted">{label}</p>
+      <p className="text-[10px] font-black text-brand-accent">{Math.round(progress)}% {current !== undefined && total !== undefined && ` (${current}/${total})`}</p>
+    </div>
+    <div className="h-2 w-full bg-neutral-bg dark:bg-neutral-900 rounded-full overflow-hidden border border-neutral-border dark:border-neutral-800">
+      <motion.div 
+        initial={{ width: 0 }}
+        animate={{ width: `${progress}%` }}
+        transition={{ duration: 0.3 }}
+        className="h-full bg-brand-accent shadow-[0_0_12px_rgba(37,99,235,0.3)]"
+      />
+    </div>
+  </div>
+);
+
 const PartnerLogo = ({ name, url, size = "md" }: { name: string, url?: string, size?: "sm" | "md" | "lg" }) => {
   const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
   const sizes = {
@@ -296,28 +302,6 @@ const extractSigla = (text: string) => {
   return null;
 };
 
-// Component to handle map resizing and fit bounds
-const MapResizer = ({ points, refreshTrigger }: { points: Point[], refreshTrigger?: any }) => {
-  const map = useMap();
-  
-  useEffect(() => {
-    // Force a resize after a short delay to allow the container to settle
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-      if (points.length > 0) {
-        const validPoints = points.filter(p => p.lat && p.lng);
-        if (validPoints.length > 0) {
-          const bounds = L.latLngBounds(validPoints.map(p => [p.lat!, p.lng!]));
-          map.fitBounds(bounds, { padding: [50, 50] });
-        }
-      }
-    }, 350); // Increased delay to ensure modal transitions are complete
-    return () => clearTimeout(timer);
-  }, [map, points, refreshTrigger]);
-  
-  return null;
-};
-
 const MAP_COLORS = [
   { name: 'Azul', value: '#2563eb' },
   { name: 'Esmeralda', value: '#10b981' },
@@ -330,57 +314,197 @@ const MAP_COLORS = [
   { name: 'Fúcsia', value: '#d946ef' },
 ];
 
-const createCustomIcon = (color: string) => {
-  return L.divIcon({
-    className: 'custom-div-icon',
-    html: `
-      <div style="
-        background-color: ${color};
-        width: 30px;
-        height: 30px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50% 50% 50% 0;
-        transform: rotate(-45deg);
-        border: 2px solid white;
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-      ">
-        <div style="
-          width: 8px;
-          height: 8px;
-          background-color: white;
-          border-radius: 50%;
-          transform: rotate(45deg);
-        "></div>
-      </div>
-    `,
-    iconSize: [30, 30],
-    iconAnchor: [15, 30],
-    popupAnchor: [0, -30],
-  });
-};
-
-const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refreshTrigger, customers = [] }: { 
+const MapComponent = ({ 
+  points, 
+  height = "400px", 
+  onExpand, 
+  onEditPoint, 
+  refreshTrigger, 
+  customers = [],
+  partners = [],
+  showPartnerAreas = false 
+}: { 
   points: Point[], 
   height?: string, 
   onExpand?: () => void, 
   onEditPoint?: (p: Point) => void, 
   refreshTrigger?: any,
-  customers?: Customer[] 
+  customers?: Customer[],
+  partners?: Partner[],
+  showPartnerAreas?: boolean
 }) => {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const [googleMap, setGoogleMap] = useState<google.maps.Map | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [mapStyle, setMapStyle] = useState<'streets' | 'satellite'>('streets');
-  const center: [number, number] = [-15.7801, -47.9292]; // Brasília center
+  const markersRef = useRef<google.maps.Marker[]>([]);
+  const circlesRef = useRef<google.maps.Circle[]>([]);
+  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
 
-  const streetsUrl = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-  const satelliteUrl = "https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}";
+  useEffect(() => {
+    setOptions({
+      key: GOOGLE_MAPS_API_KEY,
+      v: "weekly",
+      libraries: ["places", "geometry"]
+    });
+
+    const initMap = async () => {
+      try {
+        const loadTimeout = setTimeout(() => {
+          if (!window.google || !window.google.maps) {
+            setLoadError('A API do Google Maps não pôde ser carregada. Verifique se o Billing (Faturamento) está habilitado em seu Google Cloud Console.');
+          }
+        }, 10000);
+
+        // Load libraries
+        await Promise.all([
+          importLibrary('maps'),
+          importLibrary('marker'),
+          importLibrary('geocoding'),
+          importLibrary('geometry')
+        ]);
+        
+        clearTimeout(loadTimeout);
+        const { Map } = await importLibrary('maps') as google.maps.MapsLibrary;
+        if (mapRef.current && !googleMap) {
+          const map = new Map(mapRef.current, {
+            center: { lat: -15.7801, lng: -47.9292 },
+            zoom: 4,
+            mapTypeId: mapStyle === 'streets' ? 'roadmap' : 'hybrid',
+            disableDefaultUI: false,
+            zoomControl: true,
+            streetViewControl: false,
+            fullscreenControl: false,
+          });
+          setGoogleMap(map);
+        }
+      } catch (err) {
+        console.error("Error loading Google Maps:", err);
+      }
+    };
+
+    initMap();
+  }, []);
+
+  useEffect(() => {
+    if (googleMap) {
+      googleMap.setMapTypeId(mapStyle === 'streets' ? 'roadmap' : 'hybrid');
+    }
+  }, [mapStyle, googleMap]);
+
+  useEffect(() => {
+    if (!googleMap) return;
+
+    // Clear existing markers
+    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current = [];
+
+    const bounds = new google.maps.LatLngBounds();
+    let hasValidPoints = false;
+
+    points.forEach(point => {
+      if (point.lat && point.lng) {
+        const customer = customers.find(c => c.id === point.customer_id);
+        const color = customer?.color || '#2563eb';
+        
+        const marker = new google.maps.Marker({
+          position: { lat: point.lat, lng: point.lng },
+          map: googleMap,
+          title: point.customer_name,
+          icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: color,
+            fillOpacity: 1,
+            strokeColor: '#FFFFFF',
+            strokeWeight: 2,
+            scale: 8,
+          }
+        });
+
+        marker.addListener('click', () => {
+          if (infoWindowRef.current) infoWindowRef.current.close();
+          
+          const contentString = `
+            <div style="padding: 12px; font-family: Inter, sans-serif; min-width: 200px; color: #1a1a1a;">
+              <h4 style="margin: 0 0 8px 0; font-weight: 900; font-size: 14px; text-transform: uppercase;">${point.customer_name}</h4>
+              <p style="margin: 0; font-size: 11px; color: #666;">${point.address}</p>
+              <p style="margin: 4px 0 0 0; font-size: 11px; color: #666;">${point.city}, ${point.state}</p>
+              <div style="margin-top: 12px; font-weight: 800; font-size: 10px; color: #2563eb; text-transform: uppercase;">Parceiro: ${point.partner_name || 'Aguardando'}</div>
+              <button id="edit-btn-${point.id}" style="margin-top: 12px; width: 100%; padding: 8px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 10px; cursor: pointer; text-transform: uppercase;">Editar Ponto</button>
+            </div>
+          `;
+
+          const infoWindow = new google.maps.InfoWindow({ content: contentString });
+          infoWindow.open(googleMap, marker);
+          infoWindowRef.current = infoWindow;
+
+          google.maps.event.addListenerOnce(infoWindow, 'domready', () => {
+            const btn = document.getElementById(`edit-btn-${point.id}`);
+            if (btn && onEditPoint) {
+              btn.addEventListener('click', () => {
+                onEditPoint(point);
+                infoWindow.close();
+              });
+            }
+          });
+        });
+
+        markersRef.current.push(marker);
+        bounds.extend({ lat: point.lat, lng: point.lng });
+        hasValidPoints = true;
+      }
+    });
+
+    if (hasValidPoints) {
+      googleMap.fitBounds(bounds);
+      if (points.length === 1) {
+        googleMap.setZoom(15);
+      }
+    }
+  }, [googleMap, points, customers, refreshTrigger]);
+
+  // Visualize Partner Service Areas
+  useEffect(() => {
+    if (!googleMap) return;
+
+    circlesRef.current.forEach(c => c.setMap(null));
+    circlesRef.current = [];
+
+    if (showPartnerAreas && partners.length > 0) {
+      const geocoder = new google.maps.Geocoder();
+      
+      partners.forEach(partner => {
+        if (!partner.cities || !partner.state) return;
+        
+        const partnerCities = partner.cities.split(',').map(c => c.trim());
+        partnerCities.forEach(city => {
+          geocoder.geocode({ address: `${city}, ${partner.state}, Brazil` }, (results, status) => {
+            if (status === 'OK' && results && results[0]) {
+              const circle = new google.maps.Circle({
+                map: googleMap,
+                center: results[0].geometry.location,
+                radius: 15000,
+                fillColor: '#2563eb',
+                fillOpacity: 0.1,
+                strokeColor: '#2563eb',
+                strokeWeight: 1,
+                strokeOpacity: 0.3,
+                clickable: false
+              });
+              circlesRef.current.push(circle);
+            }
+          });
+        });
+      });
+    }
+  }, [googleMap, showPartnerAreas, partners]);
 
   return (
     <div style={{ height }} className={cn(
       "saas-card overflow-hidden relative z-0 group rounded-3xl",
       height === '100%' && "rounded-none shadow-none border-none saas-card-none"
     )}>
-      <div className="absolute top-4 left-4 z-[1000] flex gap-2">
+      <div className="absolute top-4 left-4 z-[1001] flex gap-2">
         <button 
           onClick={() => setMapStyle('streets')}
           className={cn(
@@ -411,70 +535,31 @@ const MapComponent = ({ points, height = "400px", onExpand, onEditPoint, refresh
             e.stopPropagation();
             onExpand();
           }}
-          className="absolute top-4 right-4 z-[1000] p-3 bg-white dark:bg-neutral-900 rounded-2xl shadow-xl border border-neutral-border dark:border-neutral-800 text-neutral-muted hover:text-brand-accent transition-all hover:scale-110 active:scale-95"
+          className="absolute top-4 right-4 z-[1001] p-3 bg-white dark:bg-neutral-900 rounded-2xl shadow-xl border border-neutral-border dark:border-neutral-800 text-neutral-muted hover:text-brand-accent transition-all hover:scale-110 active:scale-95"
           title="Expandir Mapa"
         >
           <Maximize2 size={20} />
         </button>
       )}
 
-      <MapContainer center={center} zoom={4} scrollWheelZoom={true} className="h-full w-full">
-        <TileLayer
-          attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-          url={mapStyle === 'streets' ? streetsUrl : satelliteUrl}
-        />
-        <MapResizer points={points} refreshTrigger={refreshTrigger || height} />
-        {points.map((point) => {
-          const customer = customers.find(c => c.id === point.customer_id);
-          const iconColor = customer?.color || '#2563eb';
-          const markerIcon = createCustomIcon(iconColor);
-
-          return point.lat && point.lng ? (
-            <Marker 
-              key={point.id} 
-              position={[point.lat, point.lng]}
-              icon={markerIcon}
-              eventHandlers={{
-                click: () => {
-                  if (onEditPoint) {
-                    onEditPoint(point);
-                  }
-                },
-              }}
+      <div ref={mapRef} className="h-full w-full" />
+      {loadError && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/5 backdrop-blur-sm z-[1002] p-6 text-center">
+          <div className="bg-white dark:bg-neutral-900 p-8 rounded-[2rem] shadow-2xl border border-neutral-border dark:border-neutral-800 max-w-sm">
+            <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500 mx-auto mb-6">
+              <AlertTriangle size={32} />
+            </div>
+            <p className="text-sm font-bold text-neutral-text dark:text-white uppercase tracking-widest mb-4">Erro no Mapa</p>
+            <p className="text-xs text-neutral-muted leading-relaxed mb-6">{loadError}</p>
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full py-3 bg-brand-accent text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-hover transition-all"
             >
-              <Popup className="custom-popup">
-                <div className="p-3 min-w-[200px]">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="w-8 h-8 rounded-lg bg-brand-accent/10 flex items-center justify-center text-brand-accent">
-                      <MapPin size={16} />
-                    </div>
-                    <h4 className="font-black text-sm uppercase tracking-tight text-neutral-text dark:text-white">{point.customer_name}</h4>
-                  </div>
-                  
-                  <div className="space-y-1.5 border-t border-neutral-border dark:border-white/5 pt-2">
-                    <p className="text-[10px] font-bold text-neutral-muted uppercase tracking-widest">Endereço:</p>
-                    <p className="text-xs font-semibold leading-tight">{point.address}</p>
-                    <p className="text-[10px] font-bold text-neutral-muted uppercase tracking-widest mt-2">Localização:</p>
-                    <p className="text-xs font-semibold">{point.city}, {point.state}</p>
-                    <p className="text-[11px] font-black text-brand-accent uppercase tracking-widest mt-3">Parceiro: {point.partner_name || 'Aguardando'}</p>
-                  </div>
-
-                  <div className="flex items-center justify-between mt-4">
-                    <div className={cn(
-                      "px-3 py-1 rounded-xl text-[9px] font-black uppercase tracking-widest inline-block border",
-                      point.status === 'completed' ? 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' : 
-                      point.status === 'pending' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20' :
-                      'bg-rose-500/10 text-rose-500 border-rose-500/20'
-                    )}>
-                      {point.status === 'completed' ? 'Concluído' : point.status === 'pending' ? 'Pendente' : 'Cancelado'}
-                    </div>
-                  </div>
-                </div>
-              </Popup>
-            </Marker>
-          ) : null
-        })}
-      </MapContainer>
+              Recarregar Sistema
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -675,6 +760,20 @@ export default function App() {
   const [showReductionModal, setShowReductionModal] = useState<{id: string, currentCost: number} | null>(null);
   const [reductionValue, setReductionValue] = useState(0);
   
+  const [importStatus, setImportStatus] = useState<{ 
+    isImporting: boolean; 
+    progress: number; 
+    total: number; 
+    current: number;
+    message: string;
+  }>({
+    isImporting: false,
+    progress: 0,
+    total: 0,
+    current: 0,
+    message: ''
+  });
+
   const [newPartner, setNewPartner] = useState({ name: '', contact: '', state: '', cities: '', logo_url: '' });
   const [newCustomer, setNewCustomer] = useState({ 
     name: '', 
@@ -703,27 +802,27 @@ export default function App() {
   });
 
   // --- Currency Helpers ---
-  const formatCurrency = (value: number | string) => {
-    const amount = typeof value === 'number' ? value : parseFloat(value.replace(/[^\d]/g, '')) / 100;
+  const formatCurrency = (value: number | string | undefined | null) => {
+    if (value === undefined || value === null) return 'R$ 0,00';
+    const amount = typeof value === 'number' ? value : parseFloat(String(value).replace(/[^\d]/g, '')) / 100;
     if (isNaN(amount)) return 'R$ 0,00';
     return amount.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
   };
 
-  const handleCurrencyInput = (value: string, setter: (val: number) => void) => {
-    // Se o valor contiver uma vírgula ou ponto no final, ignoramos para permitir a digitação decimal
-    // Mas a lógica padrão de máscara de moeda funciona multiplicando/dividindo por 100
-    const digits = value.replace(/\D/g, '');
+  const handleCurrencyInput = (value: string | undefined | null, setter: (val: number) => void) => {
+    if (!value) {
+      setter(0);
+      return;
+    }
+    const digits = String(value).replace(/\D/g, '');
     const amount = parseInt(digits || '0') / 100;
-    
-    // Inteligência adicional: se o usuário colar um valor grande sem formatação (ex: 25000), 
-    // a máscara padrão transformaria em 250,00. 
-    // Porém, em máscaras de entrada em tempo real, o comportamento esperado é o preenchimento da direita para a esquerda.
     setter(amount);
   };
   const [partnerFilter, setPartnerFilter] = useState<'active' | 'cancelled'>('active');
   const [pointFilter, setPointFilter] = useState<'active' | 'cancelled'>('active');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCustomerFilter, setActiveCustomerFilter] = useState<string | null>(null);
+  const [showPartnerAreas, setShowPartnerAreas] = useState(false);
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -945,6 +1044,7 @@ export default function App() {
   }, [points, dateRange]);
 
   const handleReportIncident = (id: string) => {
+    closeAllModals();
     setReportingIncidentPartnerId(id);
     setIncidentDescription('');
   };
@@ -1082,33 +1182,79 @@ export default function App() {
       header: true,
       skipEmptyLines: true,
       complete: async (results) => {
-        const data = results.data as any[];
-        if (data.length === 0) {
+        const rawData = results.data as any[];
+        if (rawData.length === 0) {
           setToast({ message: 'O arquivo está vazio.', type: 'error' });
           return;
         }
 
-        try {
-          const batch = writeBatch(db);
-          data.forEach((row) => {
-            const partnerRef = doc(collection(db, 'partners'));
-            batch.set(partnerRef, {
-              name: row.nome || row.name || '',
-              contact: row.contato || row.contact || '',
-              state: row.estado || row.state || '',
-              cities: row.cidades || row.cities || row.cidade || row.city || '',
-              logo_url: row.logo_url || '',
+        const validData: any[] = [];
+        const errors: string[] = [];
+
+        rawData.forEach((row, index) => {
+          const name = (row.nome || row.name || row.empresa || row.parceiro || row.organizacao || '').trim();
+          const contact = (row.contato || row.contact || row.telefone || row.email || row.contato_inicial || '').trim();
+          const state = (row.estado || row.state || row.uf || row.sigla || '').trim().toUpperCase();
+          const cities = (row.cidades || row.cities || row.cidade || row.city || row.area_de_atuacao || '').trim();
+          const logo_url = (row.logo_url || '').trim();
+
+          if (!name) errors.push(`Linha ${index + 1}: Nome obrigatório.`);
+          else if (name.length > 100) errors.push(`Linha ${index + 1}: Nome muito longo (máx 100).`);
+          else if (!contact) errors.push(`Linha ${index + 1}: Contato obrigatório.`);
+          else if (contact.length > 100) errors.push(`Linha ${index + 1}: Contato muito longo (máx 100).`);
+          else if (!state || state.length !== 2) errors.push(`Linha ${index + 1}: UF (Estado) deve ter exatamente 2 caracteres.`);
+          else {
+            validData.push({
+              name,
+              contact,
+              state,
+              cities: cities.substring(0, 500),
+              logo_url,
               status: 'active',
               created_at: Timestamp.now()
             });
-          });
+          }
+        });
 
-          await batch.commit();
-          setToast({ message: `${data.length} parceiros importados com sucesso!`, type: 'success' });
+        if (errors.length > 0) {
+          console.error("Erros na validação do CSV:", errors);
+          if (validData.length === 0) {
+            setToast({ 
+              message: `Erro na validação: ${errors[0]}`, 
+              type: 'error' 
+            });
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            return;
+          }
+        }
+
+        try {
+          setImportStatus({ isImporting: true, progress: 0, total: validData.length, current: 0, message: 'Iniciando importação de parceiros...' });
+          const batchSize = 500;
+          for (let i = 0; i < validData.length; i += batchSize) {
+            const batch = writeBatch(db);
+            const chunk = validData.slice(i, i + batchSize);
+            chunk.forEach(item => {
+              const partnerRef = doc(collection(db, 'partners'));
+              batch.set(partnerRef, item);
+            });
+            await batch.commit();
+            const current = Math.min(i + batchSize, validData.length);
+            setImportStatus(prev => ({ 
+              ...prev, 
+              current, 
+              progress: (current / validData.length) * 100,
+              message: `Importando parceiros: ${current} de ${validData.length}`
+            }));
+          }
+
+          setToast({ message: `${validData.length} parceiros importados com sucesso!`, type: 'success' });
           if (fileInputRef.current) fileInputRef.current.value = '';
+          setImportStatus(prev => ({ ...prev, isImporting: false }));
         } catch (error) {
           console.error("Erro na importação:", error);
-          setToast({ message: 'Erro ao importar parceiros. Verifique o formato do arquivo.', type: 'error' });
+          setToast({ message: 'Erro ao importar parceiros. Verifique se você tem permissão e se os dados estão corretos.', type: 'error' });
+          setImportStatus(prev => ({ ...prev, isImporting: false }));
         }
       },
       error: (error: any) => {
@@ -1141,8 +1287,8 @@ export default function App() {
         return;
       }
 
-      setToast({ message: `Iniciando processamento de ${placemarks.length} pontos...`, type: 'success' });
-
+      setImportStatus({ isImporting: true, progress: 0, total: placemarks.length, current: 0, message: `Iniciando processamento de ${placemarks.length} pontos...` });
+      
       try {
         let importedCount = 0;
         let batch = writeBatch(db);
@@ -1156,6 +1302,14 @@ export default function App() {
 
         for (let i = 0; i < placemarks.length; i++) {
           const pm = placemarks[i];
+          const currentProgress = ((i + 1) / placemarks.length) * 100;
+          setImportStatus(prev => ({ 
+            ...prev, 
+            current: i + 1, 
+            progress: currentProgress,
+            message: `Processando ponto ${i + 1} de ${placemarks.length}...`
+          }));
+
           const name = pm.getElementsByTagName("name")[0]?.textContent || `Ponto Importado ${i+1}`;
           const coordsStr = pm.getElementsByTagName("coordinates")[0]?.textContent?.trim();
           
@@ -1240,7 +1394,7 @@ export default function App() {
           
           // Small visual feedback for large imports
           if (i > 0 && i % 20 === 0) {
-            setToast({ message: `Importando... ${i}/${placemarks.length} concluídos`, type: 'success' });
+            // Updated state above
           }
         }
 
@@ -1251,15 +1405,30 @@ export default function App() {
         if (importedCount > 0) {
           setToast({ message: `${importedCount} pontos importados com sucesso!`, type: 'success' });
           if (kmlInputRef.current) kmlInputRef.current.value = '';
+          setShowImportModal(false);
         } else {
           setToast({ message: 'Nenhum ponto válido com coordenadas foi encontrado.', type: 'error' });
         }
+        setImportStatus(prev => ({ ...prev, isImporting: false }));
       } catch (error) {
         console.error("Erro importando KML:", error);
         setToast({ message: 'Erro crítico ao processar importação.', type: 'error' });
+        setImportStatus(prev => ({ ...prev, isImporting: false }));
       }
     };
     reader.readAsText(file);
+  };
+
+  const closeAllModals = () => {
+    setShowPartnerModal(false);
+    setShowEditPartnerModal(null);
+    setShowPointModal(false);
+    setShowEditPointModal(null);
+    setShowCustomerModal(false);
+    setShowEditCustomerModal(null);
+    setShowImportModal(false);
+    setShowReductionModal(null);
+    setReportingIncidentPartnerId(null);
   };
 
   const handleLogout = async () => {
@@ -1330,15 +1499,20 @@ export default function App() {
       const partner = partners.find(p => p.id === showEditPointModal.partner_id);
       const customer = customers.find(c => c.id === showEditPointModal.customer_id);
       
-      await updateDoc(doc(db, 'points', showEditPointModal.id), {
-        ...showEditPointModal,
+      const { id, ...updateData } = showEditPointModal;
+      
+      await updateDoc(doc(db, 'points', id), {
+        ...updateData,
+        customer_id: showEditPointModal.customer_id || 'pending',
         customer_name: customer?.name || showEditPointModal.customer_name || 'N/A',
         partner_name: partner?.name || 'Aguardando Vínculo'
       });
       setToast({ message: 'Ponto atualizado com sucesso!', type: 'success' });
       setShowEditPointModal(null);
     } catch (error) {
-      setToast({ message: 'Erro ao atualizar ponto.', type: 'error' });
+      console.error("Erro ao atualizar ponto:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `points/${showEditPointModal.id}`);
+      setToast({ message: 'Erro ao atualizar ponto. Verifique o console ou suas permissões.', type: 'error' });
     }
   };
 
@@ -1357,18 +1531,13 @@ export default function App() {
     e.preventDefault();
     if (!showEditPartnerModal) return;
     try {
-      const partnerRef = doc(db, 'partners', showEditPartnerModal.id);
-      await updateDoc(partnerRef, {
-        name: showEditPartnerModal.name,
-        contact: showEditPartnerModal.contact,
-        state: showEditPartnerModal.state,
-        cities: showEditPartnerModal.cities,
-        logo_url: showEditPartnerModal.logo_url || ''
-      });
-      
+      const { id, ...data } = showEditPartnerModal;
+      await updateDoc(doc(db, 'partners', id), data);
       setToast({ message: 'Parceiro atualizado com sucesso!', type: 'success' });
       setShowEditPartnerModal(null);
     } catch (error) {
+      console.error("Erro ao atualizar parceiro:", error);
+      handleFirestoreError(error, OperationType.UPDATE, `partners/${showEditPartnerModal.id}`);
       setToast({ message: 'Erro ao atualizar parceiro.', type: 'error' });
     }
   };
@@ -1384,6 +1553,7 @@ export default function App() {
         customer_name: customer?.name || newPoint.customer_name || 'N/A',
         partner_name: partner?.name || 'Aguardando Vínculo',
         payment_status: 'pending',
+        validation_status: 'pending',
         created_at: Timestamp.now()
       });
       setToast({ message: 'Ponto cadastrado com sucesso!', type: 'success' });
@@ -1403,6 +1573,8 @@ export default function App() {
         bandwidth: ''
       });
     } catch (error) {
+      console.error("Erro ao cadastrar ponto:", error);
+      handleFirestoreError(error, OperationType.CREATE, 'points');
       setToast({ message: 'Erro ao cadastrar ponto.', type: 'error' });
     }
   };
@@ -2079,7 +2251,7 @@ export default function App() {
                     />
                   </div>
                   <button 
-                    onClick={() => activeTab === 'partners' ? setShowPartnerModal(true) : setShowPointModal(true)}
+                    onClick={() => { closeAllModals(); if (activeTab === 'partners') setShowPartnerModal(true); else setShowPointModal(true); }}
                     className="btn-pill btn-primary flex items-center justify-center gap-2"
                   >
                     <Plus size={20} />
@@ -2172,16 +2344,24 @@ export default function App() {
                 <div className="space-y-6">
                   <NetworkTopology />
                   <div className="saas-card p-6 sm:p-8 liquid-glass">
-                    <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center gap-3">
-                      <div className="p-2 bg-brand-accent/10 rounded-lg text-brand-accent border border-brand-accent/20">
-                        <MapIcon size={20} />
-                      </div>
-                      Mapa de Cobertura Last-Mile
-                    </h3>
+                      <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <div className="p-2 bg-brand-accent/10 rounded-lg text-brand-accent border border-brand-accent/20">
+                            <MapIcon size={20} />
+                          </div>
+                          Mapa de Cobertura Last-Mile
+                        </div>
+                        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 p-2 rounded-xl border border-neutral-border dark:border-white/5 shadow-sm">
+                          <span className="text-[9px] font-black uppercase tracking-widest text-neutral-muted px-1">Ver Áreas Parceiras</span>
+                          <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
+                        </div>
+                      </h3>
                     <div className="h-[400px]">
                       <MapComponent 
                         points={points} 
                         customers={customers}
+                        partners={partners}
+                        showPartnerAreas={showPartnerAreas}
                         onExpand={() => { setExpandedMapPoints([]); setIsMapExpanded(true); }} 
                         onEditPoint={(p) => setShowEditPointModal(p)}
                       />
@@ -2278,7 +2458,7 @@ export default function App() {
                       .sort((a, b) => b.pointCount - a.pointCount)
                       .slice(0, 5)
                       .map((p, idx) => (
-                        <div key={p.id} className="flex items-center justify-between gap-4">
+                        <div key={`top-partner-${p.id}-${idx}`} className="flex items-center justify-between gap-4">
                           <div className="flex items-center gap-3 min-w-0">
                             <span className="text-xs font-bold text-neutral-muted w-4 flex-shrink-0">{idx + 1}</span>
                             <PartnerLogo name={p.name} url={p.logo_url} size="sm" />
@@ -2304,8 +2484,8 @@ export default function App() {
                     <button onClick={() => setActiveTab('points')} className="text-brand-accent text-sm font-bold hover:underline transition-all">Ver todos</button>
                   </div>
                   <div className="divide-y divide-neutral-border">
-                    {points.slice(0, 5).map((point) => (
-                      <div key={point.id} className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-neutral-bg/50 transition-all group gap-3">
+                    {points.slice(0, 5).map((point, pIdx) => (
+                      <div key={`recent-activity-${point.id}-${pIdx}`} className="p-4 sm:p-5 flex flex-col sm:row sm:items-center justify-between hover:bg-neutral-bg/50 transition-all group gap-3">
                         <div className="flex items-center gap-4">
                           <div className={cn(
                             "w-10 h-10 rounded-xl flex items-center justify-center border border-neutral-border shadow-sm",
@@ -2541,7 +2721,7 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-4 w-full md:w-auto">
                   <button 
-                    onClick={() => setShowCustomerModal(true)}
+                    onClick={() => { closeAllModals(); setShowCustomerModal(true); }}
                     className="flex-1 md:flex-none flex items-center justify-center gap-3 px-10 py-4 bg-brand-accent text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-brand-hover transition-all shadow-2xl shadow-brand-accent/30 active:scale-95"
                   >
                     <Plus size={20} strokeWidth={3} />
@@ -2577,13 +2757,13 @@ export default function App() {
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
-                        {customers.length > 0 ? customers.map((customer) => {
+                        {customers.length > 0 ? customers.map((customer, cIdx) => {
                           const customerPoints = points.filter(p => p.customer_id === customer.id || p.customer_name === customer.name);
                           const activePoints = customerPoints.filter(p => p.status === 'completed');
                           const isFiltered = activeCustomerFilter === customer.id;
                           return (
                             <tr 
-                              key={customer.id} 
+                              key={`customer-${customer.id}-${cIdx}`} 
                               onClick={() => setActiveCustomerFilter(customer.id)}
                               className={cn(
                                 "hover:bg-neutral-bg/30 dark:hover:bg-neutral-900/20 transition-all group cursor-pointer",
@@ -2635,14 +2815,14 @@ export default function App() {
                               <td className="px-10 py-8 text-right">
                                 <div className="flex justify-end gap-3">
                                   <button
-                                    onClick={() => setShowEditCustomerModal(customer)}
+                                    onClick={(e) => { e.stopPropagation(); setShowEditCustomerModal(customer); }}
                                     className="p-4 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 dark:hover:bg-brand-accent/10 rounded-2xl transition-all hover:scale-110"
                                     title="Editar Cliente"
                                   >
                                     <Edit2 size={22} />
                                   </button>
                                   <button
-                                    onClick={() => deleteCustomer(customer.id)}
+                                    onClick={(e) => { e.stopPropagation(); deleteCustomer(customer.id); }}
                                     className="p-4 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-2xl transition-all hover:scale-110"
                                     title="Excluir Contrato"
                                   >
@@ -2724,6 +2904,8 @@ export default function App() {
                         <MapComponent 
                           points={activeCustomerFilter ? points.filter(p => p.customer_id === activeCustomerFilter || p.customer_name === customers.find(c => c.id === activeCustomerFilter)?.name) : points} 
                           customers={customers}
+                          partners={partners}
+                          showPartnerAreas={showPartnerAreas}
                           height="100%"
                           onEditPoint={(p) => setShowEditPointModal(p)}
                         />
@@ -2876,8 +3058,8 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
                       {filteredFinancePoints.length > 0 ? (
-                        filteredFinancePoints.map((point) => (
-                          <tr key={point.id} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
+                        filteredFinancePoints.map((point, pIdx) => (
+                          <tr key={`finance-point-${point.id}-${pIdx}`} className="hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-colors">
                             <td className="px-8 py-6">
                               <p className="font-bold text-neutral-text">{point.customer_name}</p>
                               <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-wider">{point.city}, {point.state}</p>
@@ -2994,8 +3176,8 @@ export default function App() {
                         </thead>
                         <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
                           {filteredPartnersForFeasibility.length > 0 ? (
-                            filteredPartnersForFeasibility.map(partner => (
-                              <tr key={partner.id} className="hover:bg-neutral-bg/30 dark:hover:bg-neutral-900/30 transition-colors">
+                            filteredPartnersForFeasibility.map((partner, pIdx) => (
+                              <tr key={`feasibility-partner-${partner.id}-${pIdx}`} className="hover:bg-neutral-bg/30 dark:hover:bg-neutral-900/30 transition-colors">
                                 <td className="px-6 py-4">
                                   <div className="flex items-center gap-3">
                                     <PartnerLogo name={partner.name} url={partner.logo_url} size="sm" />
@@ -3018,6 +3200,7 @@ export default function App() {
                                 <td className="px-6 py-4 text-right">
                                   <button 
                                     onClick={() => {
+                                      closeAllModals();
                                       setActiveTab('points');
                                       setShowPointModal(true);
                                       setNewPoint(prev => ({ ...prev, partner_id: partner.id, state: partner.state }));
@@ -3054,6 +3237,8 @@ export default function App() {
                     <MapComponent 
                       points={points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id))} 
                       customers={customers}
+                      partners={partners}
+                      showPartnerAreas={showPartnerAreas}
                       height="300px" 
                       onExpand={() => {
                         setExpandedMapPoints(points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id)));
@@ -3136,8 +3321,8 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
                       {filteredPartners.length > 0 ? (
-                        filteredPartners.map((partner) => (
-                          <tr key={partner.id} className={cn("hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-all", partner.status === 'cancelled' && "opacity-50")}>
+                        filteredPartners.map((partner, pIdx) => (
+                          <tr key={`partner-row-${partner.id}-${pIdx}`} className={cn("hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-all", partner.status === 'cancelled' && "opacity-50")}>
                             <td className="px-8 py-6">
                               <div className="flex items-center gap-4">
                                 <PartnerLogo name={partner.name} url={partner.logo_url} />
@@ -3181,7 +3366,7 @@ export default function App() {
                             <td className="px-8 py-6 text-right">
                               <div className="flex justify-end gap-2">
                                 <button 
-                                  onClick={() => setShowEditPartnerModal(partner)}
+                                  onClick={(e) => { e.stopPropagation(); closeAllModals(); setShowEditPartnerModal(partner); }}
                                   className="p-2.5 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 rounded-full transition-all"
                                   title="Editar Parceiro"
                                 >
@@ -3271,13 +3456,15 @@ export default function App() {
                 <div className="flex flex-wrap items-center gap-4">
                   <div className="w-64">
                     <Select value={selectedCustomerId} onValueChange={setSelectedCustomerId}>
-                        <SelectTrigger className="bg-white dark:bg-neutral-900 shadow-xl border-neutral-border dark:border-neutral-800 rounded-2xl h-12 text-[10px] uppercase font-black px-6 hover:border-brand-accent/50 transition-all">
-                          <SelectValue placeholder="SELECIONE O CLIENTE DESTINO" />
+                        <SelectTrigger className="w-full bg-white dark:bg-neutral-900 shadow-xl border-neutral-border dark:border-neutral-800 rounded-2xl h-12 text-[10px] uppercase font-black px-6 hover:border-brand-accent/50 transition-all">
+                          <SelectValue placeholder="SELECIONE O CLIENTE DESTINO">
+                            {customers.find(c => c.id === selectedCustomerId)?.name}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
-                          <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
-                          {customers.map(c => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          <SelectItem key="points-tab-select-none" value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`pts-tab-cust-sel-${c.id}-${sIdx}`} value={c.id}>{c.name}</SelectItem>
                           ))}
                         </SelectContent>
                     </Select>
@@ -3353,8 +3540,8 @@ export default function App() {
                     </thead>
                     <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
                       {filteredPoints.length > 0 ? (
-                        filteredPoints.map((point) => (
-                          <tr key={point.id} className={cn("hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-all", point.status === 'cancelled' && "opacity-50")}>
+                        filteredPoints.map((point, pIdx) => (
+                          <tr key={`point-row-${point.id}-${pIdx}`} className={cn("hover:bg-neutral-bg/50 dark:hover:bg-neutral-900/30 transition-all", point.status === 'cancelled' && "opacity-50")}>
                             <td className="px-8 py-6">
                               <p className="font-extrabold text-neutral-text text-base leading-tight uppercase tracking-tighter">{point.customer_name}</p>
                               {(point.point_title || point.customer_id) && (
@@ -3406,7 +3593,7 @@ export default function App() {
                                 {point.status !== 'cancelled' ? (
                                   <>
                                     <button 
-                                      onClick={() => setShowEditPointModal(point)}
+                                      onClick={() => { closeAllModals(); setShowEditPointModal(point); }}
                                       className="p-2.5 text-neutral-muted hover:text-brand-accent hover:bg-brand-accent/5 rounded-full transition-all"
                                       title="Editar Ponto"
                                     >
@@ -3461,7 +3648,7 @@ export default function App() {
               ) : (
                 <div className="grid grid-cols-1 gap-8">
                   {clients.map((client, idx) => (
-                    <div key={idx} className="saas-card overflow-hidden group/card shadow-lg hover:shadow-brand-accent/5 transition-all">
+                    <div key={`client-${client.name}-${idx}`} className="saas-card overflow-hidden group/card shadow-lg hover:shadow-brand-accent/5 transition-all">
                       <div className="p-8 border-b border-neutral-border dark:border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-neutral-bg/30 dark:bg-slate-900/40">
                         <div className="flex items-center gap-5">
                           <div className="w-14 h-14 bg-brand-accent/10 dark:bg-brand-accent/20 rounded-[1.5rem] flex items-center justify-center text-brand-accent">
@@ -3482,8 +3669,8 @@ export default function App() {
                           </div>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                           {(client.states as string[]).map(s => (
-                             <span key={s} className="px-3 py-1 bg-white dark:bg-slate-800 text-[10px] font-black uppercase tracking-widest text-brand-accent rounded-xl border border-neutral-border dark:border-white/5 shadow-sm">
+                           {(client.states as string[]).map((s, sIdx) => (
+                             <span key={`cl-st-${s}-${sIdx}`} className="px-3 py-1 bg-white dark:bg-slate-800 text-[10px] font-black uppercase tracking-widest text-brand-accent rounded-xl border border-neutral-border dark:border-white/5 shadow-sm">
                                {s}
                              </span>
                            ))}
@@ -3491,9 +3678,9 @@ export default function App() {
                       </div>
                       <div className="p-8 bg-white/50 dark:bg-slate-900/10">
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                          {(client.points || []).map(point => (
+                          {(client.points || []).map((point, pIdx) => (
                             <div 
-                              key={point.id} 
+                              key={`client-point-${point.id}-${pIdx}`} 
                               onClick={() => setShowEditPointModal(point)}
                               className="p-6 rounded-[2.5rem] border border-neutral-border dark:border-white/5 bg-white dark:bg-slate-900/40 hover:border-brand-accent/50 transition-all hover:shadow-2xl hover:shadow-brand-accent/5 group/pt relative overflow-hidden active:scale-95 cursor-pointer"
                             >
@@ -3553,12 +3740,14 @@ export default function App() {
       <AnimatePresence>
         {(showPartnerModal || showEditPartnerModal || showPointModal || showReductionModal || reportingIncidentPartnerId || showCustomerModal || showEditPointModal || showImportModal) && (
           <motion.div 
+            key="modal-overlay-wrapper"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-neutral-text/20 backdrop-blur-sm flex items-center justify-center z-[200] p-4"
           >
             <motion.div 
+              key="modal-content-container"
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -3582,48 +3771,61 @@ export default function App() {
                       <Select value={selectedCustomerId} onValueChange={(val) => {
                         setSelectedCustomerId(val);
                       }}>
-                        <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 relative z-[201] ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
-                          <SelectValue placeholder="Escolha um cliente..." />
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
+                          <SelectValue placeholder="Escolha um cliente...">
+                            {customers.find(c => c.id === selectedCustomerId)?.name}
+                          </SelectValue>
                         </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border border-neutral-border dark:border-neutral-800 shadow-2xl">
-                          <SelectItem value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
-                          {customers.map(c => (
-                            <SelectItem key={c.id} value={c.id} className="font-bold">{c.name}</SelectItem>
+                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
+                          <SelectItem key="import-modal-select-none" value="pending" className="font-bold text-neutral-muted italic">Nenhum (Ponto Avulso)</SelectItem>
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`imp-modal-cust-sel-${c.id}-${sIdx}`} value={c.id} className="font-bold">{c.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div className="p-6 bg-neutral-bg dark:bg-neutral-900 rounded-3xl border border-dashed border-neutral-border dark:border-neutral-800 flex flex-col items-center gap-4">
-                      <div className="p-3 bg-white dark:bg-neutral-800 rounded-2xl shadow-sm">
-                        <Globe size={24} className="text-neutral-muted" />
-                      </div>
-                      <div className="text-center">
-                        <p className="text-sm font-bold text-neutral-text">Arraste seu arquivo .KML</p>
-                        <p className="text-[10px] text-neutral-muted uppercase tracking-widest mt-1">Ou clique para selecionar</p>
-                      </div>
-                      <input 
-                        type="file" 
-                        className="hidden" 
-                        id="kml-upload"
-                        accept=".kml" 
-                        onChange={(e) => {
-                          handleImportKML(e);
-                          setShowImportModal(false);
-                        }}
-                      />
-                      <button 
-                        onClick={() => {
-                          if (!selectedCustomerId || selectedCustomerId === '') {
-                            setToast({ message: 'Por favor, selecione um cliente antes de escolher o arquivo.', type: 'error' });
-                            return;
-                          }
-                          document.getElementById('kml-upload')?.click();
-                        }}
-                        className="w-full px-6 py-4 rounded-2xl bg-brand-accent text-white font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
-                      >
-                        Selecionar Arquivos
-                      </button>
+                      {importStatus.isImporting ? (
+                        <ProgressBar 
+                          progress={importStatus.progress} 
+                          label={importStatus.message} 
+                          current={importStatus.current} 
+                          total={importStatus.total} 
+                        />
+                      ) : (
+                        <>
+                          <div className="p-3 bg-white dark:bg-neutral-800 rounded-2xl shadow-sm">
+                            <Globe size={24} className="text-neutral-muted" />
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm font-bold text-neutral-text">Arraste seu arquivo .KML</p>
+                            <p className="text-[10px] text-neutral-muted uppercase tracking-widest mt-1">Ou clique para selecionar</p>
+                          </div>
+                          <input 
+                            type="file" 
+                            className="hidden" 
+                            id="kml-upload"
+                            accept=".kml" 
+                            onChange={(e) => {
+                              handleImportKML(e);
+                            }}
+                          />
+                          <button 
+                            disabled={importStatus.isImporting}
+                            onClick={() => {
+                              if (!selectedCustomerId || selectedCustomerId === '') {
+                                setToast({ message: 'Por favor, selecione um cliente antes de escolher o arquivo.', type: 'error' });
+                                return;
+                              }
+                              document.getElementById('kml-upload')?.click();
+                            }}
+                            className="w-full px-6 py-4 rounded-2xl bg-brand-accent text-white font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all disabled:opacity-50"
+                          >
+                            Selecionar Arquivos
+                          </button>
+                        </>
+                      )}
                     </div>
 
                     <button 
@@ -3834,12 +4036,14 @@ export default function App() {
                           setNewPoint({...newPoint, customer_id: id, customer_name: c?.name || ''});
                         }}
                       >
-                        <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione o Cliente" />
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
+                          <SelectValue placeholder="Selecione o Cliente">
+                            {customers.find(c => c.id === newPoint.customer_id)?.name || 'Selecione o Cliente'}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {customers.map(c => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`new-pt-cust-sel-${c.id}-${sIdx}`} value={c.id}>{c.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -3907,13 +4111,21 @@ export default function App() {
                     </div>
                     <div>
                       <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Parceiro Responsável</label>
-                      <Select onValueChange={(val) => setNewPoint({...newPoint, partner_id: val})}>
-                        <SelectTrigger className="rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione um parceiro" />
+                      <Select 
+                        value={newPoint.partner_id}
+                        onValueChange={(val) => {
+                          const p = partners.find(part => part.id === val);
+                          setNewPoint({...newPoint, partner_id: val, partner_name: p?.name || 'Aguardando Vínculo'});
+                        }}
+                      >
+                        <SelectTrigger className="w-full rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
+                          <SelectValue placeholder="Selecione um parceiro">
+                            {partners.find(p => p.id === newPoint.partner_id)?.name}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {partners.map(p => (
-                            <SelectItem key={p.id} value={p.id}>{p.name} ({p.state})</SelectItem>
+                          {partners.map((p, pIdx) => (
+                            <SelectItem key={`new-point-partner-${p.id}-${pIdx}`} value={p.id}>{p.name} ({p.state})</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -3964,13 +4176,13 @@ export default function App() {
                       <div>
                         <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Status SLA</label>
                         <Select onValueChange={(val) => setNewPoint({...newPoint, sla_status: val as any})} defaultValue={newPoint.sla_status}>
-                          <SelectTrigger className="rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
+                          <SelectTrigger className="w-full rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
                             <SelectValue placeholder="Selecione..." />
                           </SelectTrigger>
                           <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                            <SelectItem value="within">Dentro do SLA</SelectItem>
-                            <SelectItem value="warning">Alerta de Prazo</SelectItem>
-                            <SelectItem value="breached">SLA Violado</SelectItem>
+                            <SelectItem key="new-point-sla-within" value="within">Dentro do SLA</SelectItem>
+                            <SelectItem key="new-point-sla-warning" value="warning">Alerta de Prazo</SelectItem>
+                            <SelectItem key="new-point-sla-breached" value="breached">SLA Violado</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -4117,7 +4329,7 @@ export default function App() {
                       <div className="flex flex-wrap gap-2 mb-4">
                         {MAP_COLORS.map(c => (
                           <button
-                            key={c.value}
+                            key={`new-customer-color-${c.value}`}
                             type="button"
                             onClick={() => setNewCustomer({...newCustomer, color: c.value})}
                             className={cn(
@@ -4172,12 +4384,14 @@ export default function App() {
                           setShowEditPointModal({...showEditPointModal, customer_id: id, customer_name: c?.name || showEditPointModal.customer_name})
                         }}
                       >
-                        <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione o Cliente..." />
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
+                          <SelectValue placeholder="Selecione o Cliente...">
+                            {customers.find(c => c.id === showEditPointModal.customer_id)?.name || showEditPointModal.customer_name || 'Nenhum Cliente'}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {customers.map(c => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`edit-pt-cust-sel-${c.id}-${sIdx}`} value={c.id}>{c.name}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -4202,12 +4416,14 @@ export default function App() {
                             setShowEditPointModal({...showEditPointModal, partner_id: id, partner_name: p?.name || 'Aguardando'})
                           }}
                         >
-                          <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                            <SelectValue placeholder="Selecione o Parceiro..." />
+                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
+                            <SelectValue placeholder="Selecione o Parceiro...">
+                              {partners.find(p => p.id === showEditPointModal.partner_id)?.name}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                            {partners.map(p => (
-                              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                            {partners.map((p, pIdx) => (
+                              <SelectItem key={`partner-${p.id}-${pIdx}`} value={p.id}>{p.name}</SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
@@ -4271,13 +4487,17 @@ export default function App() {
                         value={showEditPointModal.status} 
                         onValueChange={(val: any) => setShowEditPointModal({...showEditPointModal, status: val})}
                       >
-                        <SelectTrigger className="rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Status..." />
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800">
+                          <SelectValue placeholder="Status...">
+                            {showEditPointModal.status === 'pending' ? 'Pendente' : 
+                             showEditPointModal.status === 'completed' ? 'Ativo / Concluído' : 
+                             showEditPointModal.status === 'cancelled' ? 'Cancelado / Inativo' : ''}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          <SelectItem value="pending">Pendente</SelectItem>
-                          <SelectItem value="completed">Ativo / Concluído</SelectItem>
-                          <SelectItem value="cancelled">Cancelado / Inativo</SelectItem>
+                          <SelectItem key="edit-point-status-pending" value="pending">Pendente</SelectItem>
+                          <SelectItem key="edit-point-status-completed" value="completed">Ativo / Concluído</SelectItem>
+                          <SelectItem key="edit-point-status-cancelled" value="cancelled">Cancelado / Inativo</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -4397,7 +4617,7 @@ export default function App() {
                       <div className="flex flex-wrap gap-2 mb-4">
                         {MAP_COLORS.map(c => (
                           <button
-                            key={c.value}
+                            key={`edit-customer-color-${c.value}`}
                             type="button"
                             onClick={() => setShowEditCustomerModal({...showEditCustomerModal, color: c.value})}
                             className={cn(
@@ -4463,6 +4683,8 @@ export default function App() {
                   <MapComponent 
                     points={points} 
                     customers={customers}
+                    partners={partners}
+                    showPartnerAreas={showPartnerAreas}
                     height="100%" 
                     onEditPoint={(p) => setShowEditPointModal(p)}
                     refreshTrigger={isMapExpanded}
@@ -4473,6 +4695,55 @@ export default function App() {
           </DialogContent>
         </Dialog>
       </AnimatePresence>
+      {/* Import Progress Overlay */}
+      {importStatus.isImporting && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-neutral-950/80 backdrop-blur-xl">
+          <div className="w-full max-w-md saas-card p-8 border border-white/10 shadow-2xl relative overflow-hidden">
+             <div className="absolute top-0 left-0 h-1 bg-brand-accent transition-all duration-300" style={{ width: `${importStatus.progress}%` }} />
+             
+             <div className="flex flex-col items-center text-center space-y-6">
+                <div className="w-20 h-20 rounded-3xl bg-brand-accent/10 flex items-center justify-center relative">
+                   <div className="absolute inset-0 rounded-3xl border-2 border-brand-accent/20 animate-ping opacity-20" />
+                   <div className="absolute inset-0 rounded-3xl border-2 border-brand-accent/20 animate-spin opacity-40 [animation-duration:3s]" />
+                   <Upload className="text-brand-accent animate-bounce" size={32} />
+                </div>
+                
+                <div className="space-y-2">
+                   <h3 className="text-xl font-bold text-neutral-text font-display uppercase tracking-widest">
+                     Importando Dados
+                   </h3>
+                   <p className="text-sm text-neutral-muted">
+                     {importStatus.message}
+                   </p>
+                </div>
+
+                <div className="w-full space-y-3">
+                   <div className="h-4 w-full bg-neutral-200 dark:bg-neutral-800 rounded-full overflow-hidden shadow-inner">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${importStatus.progress}%` }}
+                        className="h-full bg-gradient-to-r from-brand-accent to-brand-hover relative"
+                      >
+                         <div className="absolute inset-0 bg-white/20 animate-pulse" />
+                      </motion.div>
+                   </div>
+                   <div className="flex justify-between text-[10px] font-bold text-neutral-muted uppercase tracking-tighter">
+                      <span>Início</span>
+                      <span className="text-brand-accent">{Math.round(importStatus.progress)}% concluído</span>
+                      <span>{importStatus.total} Total</span>
+                   </div>
+                </div>
+
+                <div className="w-full pt-4 border-t border-neutral-border dark:border-neutral-800 flex justify-center">
+                   <p className="text-[10px] text-neutral-text font-bold uppercase animate-pulse flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 rounded-full bg-brand-accent" />
+                      Processando no Servidor...
+                   </p>
+                </div>
+             </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
