@@ -159,9 +159,12 @@ const handleFirestoreError = (error: unknown, operationType: OperationType, path
 interface Partner {
   id: string;
   name: string;
+  email?: string;
+  cnpj?: string;
   contact: string;
   state: string;
   cities: string;
+  coverage_cities?: string[];
   logo_url?: string;
   status: 'active' | 'cancelled';
   sla_incidents?: number;
@@ -214,30 +217,14 @@ interface MonthlyStat {
 
 // --- Components ---
 const Logo = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
-  <svg 
+  <img 
+    src="https://i.postimg.cc/R01tzT1R/Design-sem-nome-(2).png" 
+    alt="Sintese Logo" 
     width={size} 
     height={size} 
-    viewBox="0 0 100 100" 
-    className={cn("drop-shadow-sm", className)}
-    fill="none"
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <defs>
-      <linearGradient id="logoGrand" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" style={{ stopColor: '#3274d9', stopOpacity: 1 }} />
-        <stop offset="100%" style={{ stopColor: '#f05a28', stopOpacity: 1 }} />
-      </linearGradient>
-    </defs>
-    <rect width="80" height="80" x="10" y="10" rx="20" fill="currentColor" className="text-white/5" />
-    <path 
-      d="M35 65 C35 65 35 55 50 55 C65 55 65 45 65 45 C65 35 50 35 50 35 C35 35 35 45 35 45" 
-      stroke="url(#logoGrand)" 
-      strokeWidth="10" 
-      strokeLinecap="round" 
-    />
-    <circle cx="35" cy="65" r="7" fill="#3274d9" />
-    <circle cx="65" cy="45" r="7" fill="#f05a28" />
-  </svg>
+    className={cn("object-contain rounded-[25%]", className)} 
+    referrerPolicy="no-referrer"
+  />
 );
 
 // --- Helpers ---
@@ -261,7 +248,7 @@ const ProgressBar = ({ progress, label, current, total }: { progress: number, la
 );
 
 const PartnerLogo = ({ name, url, size = "md" }: { name: string, url?: string, size?: "sm" | "md" | "lg" }) => {
-  const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+  const initials = (name || '').split(' ').map(n => n?.[0] || '').join('').slice(0, 2).toUpperCase();
   const sizes = {
     sm: "w-8 h-8 text-[10px]",
     md: "w-12 h-12 text-sm",
@@ -346,32 +333,33 @@ const MapComponent = ({
   points, 
   height = "100%", 
   onExpand, 
-  onEditPoint, 
-  refreshTrigger, 
-  customers = [],
-  partners = [],
-  showPartnerAreas = false,
-  centerOn
-}: { 
-  points: Point[], 
-  height?: string, 
-  onExpand?: () => void, 
-  onEditPoint?: (p: Point) => void, 
-  refreshTrigger?: any,
-  customers?: Customer[],
-  partners?: Partner[],
-  showPartnerAreas?: boolean,
-  centerOn?: { lat: number, lng: number }
-}) => {
+    onEditPoint, 
+    refreshTrigger, 
+    customers = [],
+    partners = [],
+    showPartnerAreas = false,
+    centerOn
+  }: { 
+    points: Point[], 
+    height?: string, 
+    onExpand?: () => void, 
+    onEditPoint?: (p: Point) => void, 
+    refreshTrigger?: any,
+    customers?: Customer[],
+    partners?: Partner[],
+    showPartnerAreas?: boolean,
+    centerOn?: { lat: number, lng: number, timestamp?: number } | null
+  }) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markersRef = useRef<maplibregl.Marker[]>([]);
   const activePopupRef = useRef<maplibregl.Popup | null>(null);
 
+  const [mapReady, setMapReady] = useState(false);
+
   useEffect(() => {
     if (!mapContainer.current) return;
-
-    if (mapRef.current) return; // Prevent double init
+    if (mapRef.current) return;
 
     mapRef.current = new maplibregl.Map({
       container: mapContainer.current,
@@ -382,11 +370,16 @@ const MapComponent = ({
     });
 
     mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
+    mapRef.current.on('load', () => setMapReady(true));
 
     mapRef.current.on('click', () => {
       if (activePopupRef.current) {
         activePopupRef.current.remove();
         activePopupRef.current = null;
+      }
+      // If we are in "Edit Point" view but click outside, close it
+      if (onEditPoint) {
+        onEditPoint(null as any);
       }
     });
 
@@ -399,14 +392,15 @@ const MapComponent = ({
   }, []);
 
   useEffect(() => {
-    if (centerOn && mapRef.current) {
+    if (centerOn && mapRef.current && mapReady) {
       mapRef.current.flyTo({
         center: [centerOn.lng, centerOn.lat],
-        zoom: 10,
-        duration: 3000
+        zoom: 14.5,
+        duration: 2500,
+        essential: true
       });
     }
-  }, [centerOn]);
+  }, [centerOn, mapReady]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -435,7 +429,9 @@ const MapComponent = ({
           <div class="px-3 py-2.5 bg-[#111217] border border-[#202226] rounded-xl text-xs shadow-2xl min-w-[180px] pointer-events-auto">
             <div class="font-black uppercase tracking-widest text-[#f05a28] mb-1 font-display text-[10px] leading-tight">${point.customer_name}</div>
             <div class="text-[#7b8087] text-[8px] font-black uppercase tracking-widest mb-1 opacity-70">Endereço de Instalação</div>
-            <div class="text-[#d8d9da] text-[9px] opacity-90 font-sans leading-tight mb-2">${point.address}</div>
+            <div class="inline-block px-2 py-1 bg-white/5 border border-white/10 rounded-lg mb-2">
+              <div class="text-[#d8d9da] text-[10px] font-black leading-tight uppercase tracking-tighter">ETIQUETA: ${point.address}</div>
+            </div>
             <div class="text-[#d8d9da] text-[9px] opacity-40 font-sans mb-3">${point.city}, ${point.state}</div>
             <button id="edit-pop-${point.id}" class="w-full py-2 bg-[#3274d9] text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-[#4a8df2] transition-all shadow-lg active:scale-95">Editar Parâmetros</button>
           </div>
@@ -748,7 +744,17 @@ export default function App() {
     message: ''
   });
 
-  const [newPartner, setNewPartner] = useState({ name: '', contact: '', state: '', cities: '', logo_url: '' });
+  const [newPartner, setNewPartner] = useState({ 
+    name: '', 
+    contact: '', 
+    state: '', 
+    cities: '', 
+    coverage_cities: [] as string[], 
+    logo_url: '', 
+    email: '', 
+    cnpj: '', 
+    status: 'active' as 'active' | 'cancelled' 
+  });
   const [newCustomer, setNewCustomer] = useState({ 
     name: '', 
     cnpj: '', 
@@ -798,19 +804,22 @@ export default function App() {
   const [activeCustomerFilter, setActiveCustomerFilter] = useState<string | null>(null);
   const [showPartnerAreas, setShowPartnerAreas] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState('');
+  const [dashboardSearchPoint, setDashboardSearchPoint] = useState<{lat: number, lng: number, timestamp: number} | null>(null);
 
-  const dashboardSearchPoint = useMemo(() => {
-    if (!dashboardSearch || dashboardSearch.length < 3) return undefined;
-    const term = dashboardSearch.toLowerCase();
-    const match = points.find(p => 
-      p.address.toLowerCase().includes(term) || 
-      p.city.toLowerCase().includes(term) || 
-      p.customer_name.toLowerCase().includes(term)
-    );
-    if (match && match.lat && match.lng) {
-      return { lat: match.lat, lng: match.lng };
+  useEffect(() => {
+    if (!dashboardSearch || dashboardSearch.length < 3) {
+      setDashboardSearchPoint(null);
+      return;
     }
-    return undefined;
+    const term = dashboardSearch.toLowerCase().trim();
+    const match = points.find(p => p.city.toLowerCase() === term) || 
+                  points.find(p => p.address.toLowerCase().includes(term)) ||
+                  points.find(p => p.city.toLowerCase().includes(term)) ||
+                  points.find(p => p.customer_name.toLowerCase().includes(term));
+
+    if (match && match.lat && match.lng) {
+      setDashboardSearchPoint({ lat: match.lat, lng: match.lng, timestamp: Date.now() });
+    }
   }, [dashboardSearch, points]);
 
   // Firebase Auth Listener
@@ -2038,89 +2047,90 @@ export default function App() {
   return (
     <div className="min-h-screen bg-brand-deep text-neutral-text dark:text-neutral-100 overflow-x-hidden font-sans selection:bg-brand-accent/30 relative">
       {/* Floating Capsule Navbar */}
-      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-4xl px-4">
-        <div className="glass-capsule px-6 py-3 flex items-center justify-between liquid-glass">
-          <div className="flex items-center gap-3 active:scale-95 transition-transform cursor-pointer group">
+      <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-5xl px-4">
+        <div className="glass-capsule px-4 sm:px-6 py-3 flex items-center justify-between liquid-glass gap-4">
+          <div className="flex items-center gap-4 active:scale-95 transition-transform cursor-pointer group flex-shrink-0">
             <div className="relative group/logo">
-              <div className="w-11 h-11 bg-white dark:bg-slate-900 rounded-[1.25rem] flex items-center justify-center shadow-xl shadow-brand-accent/10 border border-neutral-border dark:border-white/5 transition-all duration-700 group-hover/logo:rotate-[15deg] overflow-hidden">
-                <Logo size={32} />
+              <div className="w-14 h-14 bg-white dark:bg-slate-900 rounded-[1.25rem] flex items-center justify-center shadow-2xl shadow-brand-accent/20 border border-neutral-border dark:border-white/10 transition-all duration-700 group-hover/logo:rotate-[8deg] overflow-hidden p-2">
+                <Logo size={42} />
               </div>
-              <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full shadow-lg animate-pulse"></div>
-              <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-brand-primary/40 rounded-full blur-[2px] animate-bounce"></div>
+              <div className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full shadow-lg animate-pulse"></div>
             </div>
-            <div className="flex flex-col -space-y-1">
-              <h1 className="text-[16px] font-black tracking-tighter text-neutral-text dark:text-white uppercase font-display leading-tight">
-                SINTESE <span className="text-brand-primary italic">CORE</span>
+            <div className="flex flex-col -space-y-1.5 hidden sm:flex">
+              <h1 className="text-[18px] font-black tracking-tight text-neutral-text dark:text-white uppercase font-display leading-tight flex items-center gap-1.5">
+                SINTESE <span className="text-brand-primary italic drop-shadow-[0_0_8px_rgba(240,90,40,0.3)]">CORE</span>
               </h1>
-              <div className="flex items-center gap-1.5 opacity-60">
-                <div className="w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse"></div>
-                <span className="text-[8px] font-black text-neutral-muted uppercase tracking-[0.3em]">Network Intelligence</span>
+              <div className="flex items-center gap-2 opacity-80">
+                <div className="w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse shadow-[0_0_10px_rgba(50,116,217,0.5)]"></div>
+                <span className="text-[8px] font-black text-neutral-muted dark:text-neutral-400 uppercase tracking-[0.4em]">Network Intelligence</span>
               </div>
             </div>
           </div>
 
-          <nav className="hidden md:flex items-center gap-1">
+          <nav className="hidden lg:flex items-center gap-0.5 overflow-x-auto no-scrollbar py-1">
             <button 
               onClick={() => setActiveTab('dashboard')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'dashboard' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'dashboard' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Dashboard
             </button>
             <button 
               onClick={() => setActiveTab('partners')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'partners' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'partners' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Parceiros
             </button>
             <button 
               onClick={() => setActiveTab('clients')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'clients' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'clients' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Clientes
             </button>
             <button 
               onClick={() => setActiveTab('points')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'points' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'points' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Pontos
             </button>
             <button 
               onClick={() => setActiveTab('reports')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'reports' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'reports' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Relatórios
             </button>
             <button 
               onClick={() => setActiveTab('finance')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'finance' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'finance' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Financeiro
             </button>
             <button 
               onClick={() => setActiveTab('feasibility')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'feasibility' ? "bg-brand-accent text-brand-deep" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-3 py-1.5 rounded-full text-[11px] font-bold transition-all whitespace-nowrap", activeTab === 'feasibility' ? "bg-brand-accent text-brand-deep" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Viabilidade
             </button>
           </nav>
 
-          <div className="flex items-center gap-3">
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1 bg-neutral-bg border border-neutral-border rounded-full">
-              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse"></div>
-              <span className="text-[10px] font-bold text-neutral-muted uppercase tracking-wider">Live</span>
+          <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 bg-neutral-bg dark:bg-slate-800/50 border border-neutral-border dark:border-white/5 rounded-full shadow-inner">
+              <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+              <span className="text-[9px] font-black text-neutral-muted dark:text-neutral-400 uppercase tracking-widest">Live</span>
             </div>
-            <button 
-              onClick={handleLogout}
-              className="p-2 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 rounded-full transition-all"
-            >
-              <LogOut size={18} />
-            </button>
-            <button 
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="md:hidden p-2 text-neutral-muted hover:text-neutral-text"
-            >
-              {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
-            </button>
+            <div className="flex items-center gap-1 sm:gap-2">
+              <button 
+                onClick={handleLogout}
+                className="p-2 text-neutral-muted hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-full transition-all active:scale-90"
+              >
+                <LogOut size={18} />
+              </button>
+              <button 
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+                className="lg:hidden p-2 text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg dark:hover:bg-white/5 rounded-full"
+              >
+                {isSidebarOpen ? <X size={20} /> : <Menu size={20} />}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2132,7 +2142,7 @@ export default function App() {
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="fixed inset-0 z-[90] bg-white pt-24 px-6 md:hidden"
+            className="fixed inset-0 z-[90] bg-white pt-24 px-6 lg:hidden"
           >
             <div className="space-y-4">
               {['dashboard', 'partners', 'clients', 'points', 'reports', 'finance', 'feasibility'].map((tab) => (
@@ -2326,13 +2336,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                         <div className="flex flex-col">
-                           <span className="text-[11px] font-black text-white uppercase tracking-widest">Ray-Tracing</span>
-                           <span className="text-[9px] text-white/40 font-bold uppercase">Polígonos de Cobertura</span>
-                         </div>
-                         <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
-                      </div>
 
                       <button 
                         onClick={() => setActiveTab('points')}
@@ -2369,6 +2372,17 @@ export default function App() {
                         type="text"
                         value={dashboardSearch}
                         onChange={(e) => setDashboardSearch(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            const term = dashboardSearch.toLowerCase().trim();
+                            const match = points.find(p => p.city.toLowerCase() === term) || 
+                                          points.find(p => p.address.toLowerCase().includes(term)) ||
+                                          points.find(p => p.city.toLowerCase().includes(term));
+                            if (match && match.lat && match.lng) {
+                              setDashboardSearchPoint({ lat: match.lat, lng: match.lng, timestamp: Date.now() });
+                            }
+                          }
+                        }}
                         placeholder="Pesquisar cidade, endereço ou cliente..."
                         className="flex-1 bg-transparent border-none text-white placeholder:text-white/30 text-sm font-medium focus:ring-0 py-2"
                       />
@@ -2436,7 +2450,7 @@ export default function App() {
                           const pExpense = pPoints.reduce((acc, curr) => acc + (curr.expense || 0), 0);
                           const pRevenue = pPoints.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
                           return {
-                            name: p.name.split(' ')[0],
+                            name: (p.name || '').split(' ')[0] || 'Parceiro',
                             expense: pExpense,
                             revenue: pRevenue
                           };
@@ -2534,10 +2548,16 @@ export default function App() {
                                point.status === 'cancelled' ? <XCircle size={20} /> : <AlertCircle size={20} />}
                             </div>
                             <div>
-                              <p className="font-bold text-neutral-text text-base">{point.customer_name}</p>
-                              <div className="flex items-center gap-1.5 mt-0.5">
-                                <PartnerLogo name={partners.find(p => p.id === point.partner_id)?.name || ''} url={partners.find(p => p.id === point.partner_id)?.logo_url} size="sm" />
-                                <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-wider">{point.partner_name}</p>
+                              <p className="font-bold text-neutral-text text-base tracking-tighter">{point.customer_name}</p>
+                              <div className="flex flex-col gap-1 mt-1">
+                                <div className="flex items-center gap-1.5 px-2 py-0.5 bg-neutral-bg dark:bg-slate-800 border border-neutral-border dark:border-white/5 rounded-lg w-fit shadow-sm">
+                                  <MapPin size={8} className="text-brand-accent" />
+                                  <span className="text-[9px] text-neutral-text font-black uppercase tracking-tight truncate max-w-[150px]">ETIQUETA: {point.address}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 pl-0.5 opacity-60">
+                                  <PartnerLogo name={partners.find(p => p.id === point.partner_id)?.name || ''} url={partners.find(p => p.id === point.partner_id)?.logo_url} size="sm" />
+                                  <p className="text-[9px] text-neutral-muted font-bold uppercase tracking-widest">{point.partner_name}</p>
+                                </div>
                               </div>
                             </div>
                           </div>
@@ -3700,8 +3720,11 @@ export default function App() {
                               )}
                             </td>
                             <td className="px-8 py-6">
-                              <p className="text-sm text-neutral-text font-semibold">{point.address}</p>
-                              <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-widest mt-1">{point.city}, {point.state}</p>
+                              <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-neutral-bg/50 dark:bg-slate-800/50 border border-neutral-border dark:border-white/5 rounded-xl shadow-inner group/addr">
+                                <MapPin size={12} className="text-brand-accent group-hover/addr:scale-110 transition-transform" />
+                                <p className="text-[13px] text-neutral-text font-bold tracking-tight">{point.address}</p>
+                              </div>
+                              <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-widest mt-2 ml-1">{point.city}, {point.state}</p>
                             </td>
                             <td className="px-8 py-6 text-brand-accent font-bold">{point.partner_name || 'N/A'}</td>
                             <td className="px-8 py-6">
@@ -3844,7 +3867,12 @@ export default function App() {
                                 </span>
                               </div>
                               <div className="flex flex-col h-full">
-                                <p className="text-base font-bold text-neutral-text dark:text-neutral-100 mb-6 line-clamp-2 pr-16 leading-tight">{point.address}</p>
+                                <div className="mb-6 pr-10">
+                                  <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-neutral-bg dark:bg-slate-800 border border-neutral-border dark:border-white/5 rounded-[1.25rem] shadow-sm mb-4">
+                                    <MapPin size={14} className="text-brand-accent flex-shrink-0" />
+                                    <p className="text-[13px] font-black text-neutral-text dark:text-neutral-100 line-clamp-1 leading-tight tracking-tight uppercase">ETIQUETA: {point.address}</p>
+                                  </div>
+                                </div>
                                 <div className="mt-auto space-y-3">
                                   <div className="flex items-center gap-3 text-[11px] text-neutral-muted font-bold">
                                     <div className="w-6 h-6 rounded-xl bg-neutral-bg dark:bg-slate-800 flex items-center justify-center text-neutral-muted">
@@ -3885,18 +3913,429 @@ export default function App() {
       </div>
     </main>
 
-      {/* Modals */}
+      {/* Modals & Panels */}
       <AnimatePresence>
-        {(showPartnerModal || showEditPartnerModal || showPointModal || showReductionModal || reportingIncidentPartnerId || showCustomerModal || showEditPointModal || showImportModal || showEditCustomerModal) && (
+        {/* EDIT POINT PANEL */}
+        {showEditPointModal && (
+          <>
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowEditPointModal(null)}
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1100]"
+            />
+            <motion.div 
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
+              className="fixed top-0 right-0 h-full w-full max-w-lg bg-[#111217] border-l border-white/10 shadow-[-40px_0_80px_-20px_rgba(0,0,0,0.8)] z-[1101] flex flex-col"
+            >
+              <div className="p-8 border-b border-white/10 flex items-center justify-between bg-neutral-bg/20">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-brand-accent flex items-center justify-center text-brand-deep shadow-xl shadow-brand-accent/20">
+                    <MapPin size={24} strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tighter leading-none">Inspecionar Ponto</h3>
+                    <p className="text-[10px] font-black text-neutral-muted uppercase tracking-widest mt-2">{showEditPointModal.id.slice(0,8)}...{showEditPointModal.id.slice(-4)}</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setShowEditPointModal(null)}
+                  className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-white transition-all underline-none"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto saas-scrollbar p-8">
+                <form id="edit-point-form" onSubmit={handleUpdatePoint} className="space-y-8">
+                  {/* ... Point fields ... */}
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Vincular Cliente</label>
+                      <Select 
+                        value={showEditPointModal.customer_id} 
+                        onValueChange={(id) => {
+                          const c = customers.find(cust => cust.id === id);
+                          setShowEditPointModal({...showEditPointModal, customer_id: id, customer_name: c?.name || showEditPointModal.customer_name})
+                        }}
+                      >
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-neutral-bg/50 border-white/5 shadow-inner">
+                          <SelectValue placeholder="Selecione o Cliente..." />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#1a1b21] border-white/10">
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`edit-pt-cust-sel-${c.id}-${sIdx}`} value={c.id} className="font-bold">{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Referência</label>
+                        <Input 
+                          required
+                          className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner"
+                          value={showEditPointModal.customer_name}
+                          onChange={e => setShowEditPointModal({...showEditPointModal, customer_name: e.target.value})}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Responsável</label>
+                        <Select 
+                          value={showEditPointModal.partner_id} 
+                          onValueChange={(id) => {
+                            const p = partners.find(part => part.id === id);
+                            setShowEditPointModal({...showEditPointModal, partner_id: id, partner_name: p?.name || 'Aguardando'})
+                          }}
+                        >
+                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-neutral-bg/50 border-white/5 shadow-inner">
+                            <SelectValue placeholder="Selecione o Parceiro..." />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#1a1b21] border-white/10">
+                            {partners.map((p, pIdx) => (
+                              <SelectItem key={`partner-${p.id}-${pIdx}`} value={p.id} className="font-bold">{p.name}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Localização</label>
+                      <Input 
+                        required
+                        className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner"
+                        value={showEditPointModal.address}
+                        onChange={e => setShowEditPointModal({...showEditPointModal, address: e.target.value})}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-6">
+                       <div className="col-span-2">
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cidade</label>
+                          <Input 
+                            className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner"
+                            value={showEditPointModal.city}
+                            onChange={e => setShowEditPointModal({...showEditPointModal, city: e.target.value})}
+                          />
+                       </div>
+                       <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">UF</label>
+                          <Input 
+                            maxLength={2}
+                            className="rounded-2xl py-6 uppercase bg-neutral-bg/50 border-white/5 shadow-inner"
+                            value={showEditPointModal.state}
+                            onChange={e => setShowEditPointModal({...showEditPointModal, state: e.target.value.toUpperCase()})}
+                          />
+                       </div>
+                    </div>
+
+                    <div className="p-6 bg-brand-accent/5 rounded-[2rem] border border-brand-accent/10 space-y-6">
+                      <div className="flex items-center gap-3 mb-2">
+                        <TrendingUp size={16} className="text-brand-accent" />
+                        <span className="text-[10px] font-black uppercase tracking-widest text-brand-accent">Métricas Financeiras</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3 ml-1">Receita</label>
+                          <Input 
+                            className="rounded-2xl py-6 bg-white/5 border-white/5 shadow-inner border-brand-accent/20"
+                            placeholder="R$ 0,00"
+                            value={formatCurrency(showEditPointModal.revenue)}
+                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, revenue: val}))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-white/40 uppercase tracking-widest mb-3 ml-1">Despesa</label>
+                          <Input 
+                            className="rounded-2xl py-6 bg-white/5 border-white/5 shadow-inner border-rose-500/20"
+                            placeholder="R$ 0,00"
+                            value={formatCurrency(showEditPointModal.expense)}
+                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, expense: val}))}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Status Operacional</label>
+                      <Select 
+                        value={showEditPointModal.status} 
+                        onValueChange={(val: any) => setShowEditPointModal({...showEditPointModal, status: val})}
+                      >
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-neutral-bg/50 border-white/5 shadow-inner">
+                          <SelectValue placeholder="Status..." />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#1a1b21] border-white/10 shadow-2xl">
+                          <SelectItem value="pending" className="font-bold text-amber-500">Pendente</SelectItem>
+                          <SelectItem value="completed" className="font-bold text-emerald-500">Ativo / Concluído</SelectItem>
+                          <SelectItem value="cancelled" className="font-bold text-rose-500">Cancelado / Inativo</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div className="p-8 bg-black/30 border-t border-white/10 flex gap-4">
+                <button onClick={() => setShowEditPointModal(null)} className="flex-1 px-6 py-5 rounded-2xl border border-white/10 text-white font-black uppercase tracking-widest text-[10px] hover:bg-white/5 transition-all">Cancelar</button>
+                <button form="edit-point-form" type="submit" className="flex-1 px-6 py-5 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover transition-all active:scale-95">Atualizar</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {/* PARTNER ADD/EDIT PANEL */}
+        {(showPartnerModal || showEditPartnerModal) && (
+          <>
+            <motion.div 
+              key="partner-modal-overlay"
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              exit={{ opacity: 0 }} 
+              onClick={() => { setShowPartnerModal(false); setShowEditPartnerModal(null); }} 
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1100]" 
+            />
+            <motion.div 
+              key="partner-modal-content"
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
+              className="fixed top-0 right-0 h-full w-full max-w-lg bg-[#111217] border-l border-white/10 shadow-[-40px_0_80px_-20px_rgba(0,0,0,0.8)] z-[1101] flex flex-col"
+            >
+              <div className="p-8 border-b border-white/10 flex items-center justify-between bg-neutral-bg/20">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-brand-accent flex items-center justify-center text-brand-deep shadow-xl shadow-brand-accent/20">
+                    <Globe size={24} strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tighter leading-none">{showEditPartnerModal ? 'Editar Parceiro' : 'Novo Parceiro'}</h3>
+                    <p className="text-[10px] font-black text-neutral-muted uppercase tracking-widest mt-2">{showEditPartnerModal ? 'Atualize as credenciais e cobertura' : 'Inicie uma nova conexão estratégica'}</p>
+                  </div>
+                </div>
+                <button onClick={() => { setShowPartnerModal(false); setShowEditPartnerModal(null); }} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-white transition-all"><X size={20} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto saas-scrollbar p-8">
+                <form id="partner-form" onSubmit={showEditPartnerModal ? handleUpdatePartner : handleAddPartner} className="space-y-8">
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Nome da Organização</label>
+                      <Input required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditPartnerModal ? showEditPartnerModal.name : newPartner.name} onChange={e => showEditPartnerModal ? setShowEditPartnerModal({...showEditPartnerModal, name: e.target.value}) : setNewPartner({...newPartner, name: e.target.value})} placeholder="Ex: TecnoLink Soluções" />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">E-mail de Contato</label>
+                      <Input type="email" required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditPartnerModal ? showEditPartnerModal.email : newPartner.email} onChange={e => showEditPartnerModal ? setShowEditPartnerModal({...showEditPartnerModal, email: e.target.value}) : setNewPartner({...newPartner, email: e.target.value})} placeholder="financeiro@tecnolink.com" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Documento (CNPJ)</label>
+                        <Input className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditPartnerModal ? (showEditPartnerModal.cnpj || '') : (newPartner.cnpj || '')} onChange={e => showEditPartnerModal ? setShowEditPartnerModal({...showEditPartnerModal, cnpj: e.target.value}) : setNewPartner({...newPartner, cnpj: e.target.value})} placeholder="00.000.000/0000-00" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Status Global</label>
+                        <Select value={showEditPartnerModal ? showEditPartnerModal.status : newPartner.status} onValueChange={(val: any) => showEditPartnerModal ? setShowEditPartnerModal({...showEditPartnerModal, status: val}) : setNewPartner({...newPartner, status: val})}>
+                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-neutral-bg/50 border-white/5 shadow-inner">
+                            <SelectValue placeholder="Status..." />
+                          </SelectTrigger>
+                          <SelectContent className="bg-[#1a1b21] border-white/10">
+                            <SelectItem value="active" className="text-emerald-500 font-bold">Operação Ativa</SelectItem>
+                            <SelectItem value="inactive" className="text-rose-500 font-bold">Suspenso</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cidades Atendidas (Separadas por vírgula)</label>
+                      <textarea className="w-full min-h-[120px] rounded-2xl p-6 bg-neutral-bg/50 border border-white/5 shadow-inner text-neutral-text placeholder:text-neutral-muted/30 focus:ring-2 focus:ring-brand-accent/20 transition-all font-medium" value={showEditPartnerModal ? (showEditPartnerModal.coverage_cities || []).join(', ') : (newPartner.coverage_cities || []).join(', ')} onChange={e => { const cities = e.target.value.split(',').map(s => s.trim()); showEditPartnerModal ? setShowEditPartnerModal({...showEditPartnerModal, coverage_cities: cities}) : setNewPartner({...newPartner, coverage_cities: cities}) }} placeholder="São Paulo, Campinas, Santos..." />
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div className="p-8 bg-black/30 border-t border-white/10 flex gap-4">
+                <button onClick={() => { setShowPartnerModal(false); setShowEditPartnerModal(null); }} className="flex-1 px-6 py-5 rounded-2xl border border-white/10 text-white font-black uppercase tracking-widest text-[10px] hover:bg-white/5 transition-all">Descartar</button>
+                <button form="partner-form" type="submit" className="flex-1 px-6 py-5 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover transition-all active:scale-95">{showEditPartnerModal ? 'Salvar Alterações' : 'Criar Parceiro'}</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {/* CUSTOMER ADD/EDIT PANEL */}
+        {(showCustomerModal || showEditCustomerModal) && (
+          <>
+            <motion.div 
+              key="customer-modal-overlay"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+              onClick={() => { setShowCustomerModal(false); setShowEditCustomerModal(null); }} 
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1100]" 
+            />
+            <motion.div 
+              key="customer-modal-content"
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
+              className="fixed top-0 right-0 h-full w-full max-w-lg bg-[#111217] border-l border-white/10 shadow-[-40px_0_80px_-20px_rgba(0,0,0,0.8)] z-[1101] flex flex-col"
+            >
+              <div className="p-8 border-b border-white/10 flex items-center justify-between bg-neutral-bg/20">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-brand-accent flex items-center justify-center text-brand-deep shadow-xl shadow-brand-accent/20">
+                    <Users size={24} strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tighter leading-none">{showEditCustomerModal ? 'Editar Cliente' : 'Novo Cliente'}</h3>
+                    <p className="text-[10px] font-black text-neutral-muted uppercase tracking-widest mt-2">{showEditCustomerModal ? 'Ajuste os dados contratuais' : 'Cadastre uma nova conta corporativa'}</p>
+                  </div>
+                </div>
+                <button onClick={() => { setShowCustomerModal(false); setShowEditCustomerModal(null); }} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-white transition-all"><X size={20} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto saas-scrollbar p-8">
+                <form id="customer-form" onSubmit={showEditCustomerModal ? handleUpdateCustomer : handleAddCustomer} className="space-y-8">
+                  <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Razão Social / Nome Fantasia</label>
+                      <Input required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditCustomerModal ? showEditCustomerModal.name : newCustomer.name} onChange={e => showEditCustomerModal ? setShowEditCustomerModal({...showEditCustomerModal, name: e.target.value}) : setNewCustomer({...newCustomer, name: e.target.value})} placeholder="Nome da Empresa" />
+                    </div>
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">CNPJ / CPF</label>
+                        <Input required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditCustomerModal ? showEditCustomerModal.cnpj : newCustomer.cnpj} onChange={e => showEditCustomerModal ? setShowEditCustomerModal({...showEditCustomerModal, cnpj: e.target.value}) : setNewCustomer({...newCustomer, cnpj: e.target.value})} placeholder="00.000.000/0000-00" />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Segmento</label>
+                        <Input className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditCustomerModal ? showEditCustomerModal.segment : newCustomer.segment} onChange={e => showEditCustomerModal ? setShowEditCustomerModal({...showEditCustomerModal, segment: e.target.value}) : setNewCustomer({...newCustomer, segment: e.target.value})} placeholder="Ex: Varejo, Saúde..." />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">E-mail Corporativo</label>
+                      <Input type="email" required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={showEditCustomerModal ? showEditCustomerModal.email : newCustomer.email} onChange={e => showEditCustomerModal ? setShowEditCustomerModal({...showEditCustomerModal, email: e.target.value}) : setNewCustomer({...newCustomer, email: e.target.value})} placeholder="contato@empresa.com" />
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div className="p-8 bg-black/30 border-t border-white/10 flex gap-4">
+                <button onClick={() => { setShowCustomerModal(false); setShowEditCustomerModal(null); }} className="flex-1 px-6 py-5 rounded-2xl border border-white/10 text-white font-black uppercase tracking-widest text-[10px] hover:bg-white/5 transition-all">Cancelar</button>
+                <button form="customer-form" type="submit" className="flex-1 px-6 py-5 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover transition-all active:scale-95">{showEditCustomerModal ? 'Salvar Dados' : 'Criar Conta'}</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+
+        {/* POINT ADD PANEL */}
+        {showPointModal && (
+          <>
+            <motion.div 
+              key="point-modal-overlay"
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} 
+              onClick={() => setShowPointModal(false)} 
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[1100]" 
+            />
+            <motion.div 
+              key="point-modal-content"
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 30, stiffness: 300, mass: 0.8 }}
+              className="fixed top-0 right-0 h-full w-full max-w-lg bg-[#111217] border-l border-white/10 shadow-[-40px_0_80px_-20px_rgba(0,0,0,0.8)] z-[1101] flex flex-col"
+            >
+              <div className="p-8 border-b border-white/10 flex items-center justify-between bg-neutral-bg/20">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-brand-accent flex items-center justify-center text-brand-deep shadow-xl shadow-brand-accent/20">
+                    <Plus size={24} strokeWidth={3} />
+                  </div>
+                  <div>
+                    <h3 className="text-xl font-black text-white uppercase tracking-tighter leading-none">Novo Ponto de Presença</h3>
+                    <p className="text-[10px] font-black text-neutral-muted uppercase tracking-widest mt-2">{newPoint.address ? 'Geolocalização identificada' : 'Adicione as coordenadas e detalhes'}</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowPointModal(false)} className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-white transition-all"><X size={20} /></button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto saas-scrollbar p-8">
+                <form id="new-point-form" onSubmit={handleAddPoint} className="space-y-8">
+                   <div className="space-y-6">
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cliente</label>
+                      <Select 
+                        value={newPoint.customer_id} 
+                        onValueChange={(id) => {
+                          const c = customers.find(cust => cust.id === id);
+                          setNewPoint({...newPoint, customer_id: id, customer_name: c?.name || ''})
+                        }}
+                      >
+                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-neutral-bg/50 border-white/5 shadow-inner">
+                          <SelectValue placeholder="Selecione o Cliente..." />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[#1a1b21] border-white/10">
+                          {customers.map((c, sIdx) => (
+                            <SelectItem key={`new-pt-cust-${c.id}-${sIdx}`} value={c.id} className="font-bold">{c.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Latitude</label>
+                        <Input required type="number" step="any" className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={newPoint.lat} onChange={e => setNewPoint({...newPoint, lat: parseFloat(e.target.value)})} />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Longitude</label>
+                        <Input required type="number" step="any" className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={newPoint.lng} onChange={e => setNewPoint({...newPoint, lng: parseFloat(e.target.value)})} />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Endereço Completo</label>
+                      <Input required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={newPoint.address} onChange={e => setNewPoint({...newPoint, address: e.target.value})} placeholder="Rua, Número, Bairro..." />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-6">
+                       <div className="col-span-2">
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cidade</label>
+                          <Input required className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={newPoint.city} onChange={e => setNewPoint({...newPoint, city: e.target.value})} />
+                       </div>
+                       <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">UF</label>
+                          <Input required maxLength={2} className="rounded-2xl py-6 uppercase bg-neutral-bg/50 border-white/5 shadow-inner" value={newPoint.state} onChange={e => setNewPoint({...newPoint, state: e.target.value.toUpperCase()})} />
+                       </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-6">
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Receita Mensal (R$)</label>
+                        <Input className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={formatCurrency(newPoint.revenue)} onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, revenue: val}))} />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Despesa Mensal (R$)</label>
+                        <Input className="rounded-2xl py-6 bg-neutral-bg/50 border-white/5 shadow-inner" value={formatCurrency(newPoint.expense)} onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, expense: val}))} />
+                      </div>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div className="p-8 bg-black/30 border-t border-white/10 flex gap-4">
+                <button onClick={() => setShowPointModal(false)} className="flex-1 px-6 py-5 rounded-2xl border border-white/10 text-white font-black uppercase tracking-widest text-[10px] hover:bg-white/5 transition-all">Cancelar</button>
+                <button form="new-point-form" type="submit" className="flex-1 px-6 py-5 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover transition-all active:scale-95">Criar Ponto</button>
+              </div>
+            </motion.div>
+          </>
+        )}
+        
+        {(showReductionModal || reportingIncidentPartnerId || showImportModal) && (
           <motion.div 
-            key="modal-overlay-wrapper"
+            key="generic-modal-overlay"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 bg-neutral-text/20 backdrop-blur-sm flex items-center justify-center z-[200] p-4"
           >
             <motion.div 
-              key="modal-content-container"
+              key="generic-modal-content"
               initial={{ scale: 0.95, opacity: 0, y: 20 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
               exit={{ scale: 0.95, opacity: 0, y: 20 }}
@@ -3986,6 +4425,7 @@ export default function App() {
                   </div>
                 </>
               )}
+
               {reportingIncidentPartnerId && (
                 <>
                   <div className="flex items-center gap-4 mb-8">
@@ -4030,331 +4470,6 @@ export default function App() {
                 </>
               )}
 
-              {showPartnerModal && (
-                <>
-                  <h3 className="text-2xl font-extrabold text-neutral-text mb-8 font-display">Cadastrar Novo Parceiro</h3>
-                  <form onSubmit={handleAddPartner} className="space-y-6">
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Nome da Empresa</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={newPartner.name}
-                        onChange={e => setNewPartner({...newPartner, name: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Contato Direto</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={newPartner.contact}
-                        onChange={e => setNewPartner({...newPartner, contact: e.target.value})}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF</label>
-                        <Input 
-                          required
-                          maxLength={2}
-                          className="rounded-2xl py-6 uppercase"
-                          value={newPartner.state}
-                          onChange={e => setNewPartner({...newPartner, state: e.target.value.toUpperCase()})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidades de Atuação</label>
-                        <Input 
-                          required
-                          placeholder="Ex: São Paulo, Campinas"
-                          className="rounded-2xl py-6"
-                          value={newPartner.cities}
-                          onChange={e => setNewPartner({...newPartner, cities: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">URL da Logo (Opcional)</label>
-                      <Input 
-                        className="rounded-2xl py-6"
-                        placeholder="https://exemplo.com/logo.png"
-                        value={newPartner.logo_url}
-                        onChange={e => setNewPartner({...newPartner, logo_url: e.target.value})}
-                      />
-                    </div>
-                    <div className="flex gap-4 pt-6">
-                      <button 
-                        type="button"
-                        onClick={() => setShowPartnerModal(false)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
-                      >
-                        Salvar Parceiro
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
-              {showEditPartnerModal && (
-                <>
-                  <h3 className="text-2xl font-extrabold text-neutral-text mb-8 font-display">Editar Parceiro</h3>
-                  <form onSubmit={handleUpdatePartner} className="space-y-6">
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Nome da Empresa</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={showEditPartnerModal.name}
-                        onChange={e => setShowEditPartnerModal({...showEditPartnerModal, name: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Contato Direto</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={showEditPartnerModal.contact}
-                        onChange={e => setShowEditPartnerModal({...showEditPartnerModal, contact: e.target.value})}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF</label>
-                        <Input 
-                          required
-                          maxLength={2}
-                          className="rounded-2xl py-6 uppercase"
-                          value={showEditPartnerModal.state}
-                          onChange={e => setShowEditPartnerModal({...showEditPartnerModal, state: e.target.value.toUpperCase()})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidades de Atuação</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          value={showEditPartnerModal.cities}
-                          onChange={e => setShowEditPartnerModal({...showEditPartnerModal, cities: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">URL da Logo (Opcional)</label>
-                      <Input 
-                        className="rounded-2xl py-6"
-                        value={showEditPartnerModal.logo_url || ''}
-                        onChange={e => setShowEditPartnerModal({...showEditPartnerModal, logo_url: e.target.value})}
-                      />
-                    </div>
-                    <div className="flex gap-4 pt-6">
-                      <button 
-                        type="button"
-                        onClick={() => setShowEditPartnerModal(null)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
-                      >
-                        Atualizar Dados
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
-              {showPointModal && (
-                <>
-                  <h3 className="text-2xl font-extrabold text-neutral-text mb-8 font-display">Novo Ponto Operacional</h3>
-                  <form onSubmit={handleAddPoint} className="space-y-5">
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cliente Solicitante</label>
-                      <Select 
-                        value={newPoint.customer_id} 
-                        onValueChange={id => {
-                          const c = customers.find(cust => cust.id === id);
-                          setNewPoint({...newPoint, customer_id: id, customer_name: c?.name || ''});
-                        }}
-                      >
-                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione o Cliente">
-                            {customers.find(c => c.id === newPoint.customer_id)?.name || 'Selecione o Cliente'}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {customers.map((c, sIdx) => (
-                            <SelectItem key={`new-pt-cust-sel-${c.id}-${sIdx}`} value={c.id}>{c.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Nome/Identificação do Ponto</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={newPoint.customer_name} // Using customer_name for Point Title if custom
-                        onChange={e => setNewPoint({...newPoint, customer_name: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Endereço Completo</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={newPoint.address}
-                        onChange={e => setNewPoint({...newPoint, address: e.target.value})}
-                      />
-                    </div>
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF</label>
-                        <Input 
-                          required
-                          maxLength={2}
-                          className="rounded-2xl py-6 uppercase"
-                          value={newPoint.state}
-                          onChange={e => setNewPoint({...newPoint, state: e.target.value.toUpperCase()})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          value={newPoint.city}
-                          onChange={e => setNewPoint({...newPoint, city: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Latitude</label>
-                        <Input 
-                          type="number"
-                          step="any"
-                          className="rounded-2xl py-6"
-                          value={newPoint.lat || ''}
-                          onChange={e => setNewPoint({...newPoint, lat: parseFloat(e.target.value)})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Longitude</label>
-                        <Input 
-                          type="number"
-                          step="any"
-                          className="rounded-2xl py-6"
-                          value={newPoint.lng || ''}
-                          onChange={e => setNewPoint({...newPoint, lng: parseFloat(e.target.value)})}
-                        />
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Parceiro Responsável</label>
-                      <Select 
-                        value={newPoint.partner_id}
-                        onValueChange={(val) => {
-                          const p = partners.find(part => part.id === val);
-                          setNewPoint({...newPoint, partner_id: val, partner_name: p?.name || 'Aguardando Vínculo'});
-                        }}
-                      >
-                        <SelectTrigger className="w-full rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione um parceiro">
-                            {partners.find(p => p.id === newPoint.partner_id)?.name}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {partners.map((p, pIdx) => (
-                            <SelectItem key={`new-point-partner-${p.id}-${pIdx}`} value={p.id}>{p.name} ({p.state})</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Equipamento (ONT/Router)</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="Ex: Huawei HG8245H"
-                          value={newPoint.equipment || ''}
-                          onChange={e => setNewPoint({...newPoint, equipment: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Banda Contratada</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="Ex: 500Mbps"
-                          value={newPoint.bandwidth || ''}
-                          onChange={e => setNewPoint({...newPoint, bandwidth: e.target.value})}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Receita Mensal (Venda R$)</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          placeholder="R$ 0,00"
-                          value={formatCurrency(newPoint.revenue)}
-                          onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, revenue: val}))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Despesa Mensal (Custo R$)</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          placeholder="R$ 0,00"
-                          value={formatCurrency(newPoint.expense)}
-                          onChange={e => handleCurrencyInput(e.target.value, (val) => setNewPoint({...newPoint, expense: val}))}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Status SLA</label>
-                        <Select onValueChange={(val) => setNewPoint({...newPoint, sla_status: val as any})} defaultValue={newPoint.sla_status}>
-                          <SelectTrigger className="w-full rounded-2xl py-6 bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                            <SelectValue placeholder="Selecione..." />
-                          </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                            <SelectItem key="new-point-sla-within" value="within">Dentro do SLA</SelectItem>
-                            <SelectItem key="new-point-sla-warning" value="warning">Alerta de Prazo</SelectItem>
-                            <SelectItem key="new-point-sla-breached" value="breached">SLA Violado</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-                    <div className="flex gap-4 pt-4">
-                      <button 
-                        type="button"
-                        onClick={() => setShowPointModal(false)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
-                      >
-                        Salvar Ponto
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
               {showReductionModal && (
                 <>
                   <h3 className="text-2xl font-extrabold text-neutral-text mb-2 font-display">Redução de Valor</h3>
@@ -4385,416 +4500,6 @@ export default function App() {
                         className="flex-1 px-6 py-4 rounded-2xl bg-amber-500 text-white font-bold hover:bg-amber-600 shadow-xl shadow-amber-500/20 transition-all"
                       >
                         Aplicar Redução
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
-              {showCustomerModal && (
-                <>
-                  <h3 className="text-2xl font-extrabold text-neutral-text mb-8 font-display">Cadastro Completo de Cliente</h3>
-                  <form onSubmit={handleAddCustomer} className="space-y-5">
-                    <div className="grid grid-cols-2 gap-5">
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Razão Social / Nome Fantasia</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          value={newCustomer.name}
-                          onChange={e => setNewCustomer({...newCustomer, name: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">CNPJ</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="00.000.000/0000-00"
-                          value={newCustomer.cnpj || ''}
-                          onChange={e => setNewCustomer({...newCustomer, cnpj: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Responsável / Contato</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={newCustomer.contact || ''}
-                          onChange={e => setNewCustomer({...newCustomer, contact: e.target.value})}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Telefone / WhatsApp</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={newCustomer.phone || ''}
-                          onChange={e => setNewCustomer({...newCustomer, phone: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">E-mail para Faturamento</label>
-                        <Input 
-                          type="email"
-                          className="rounded-2xl py-6"
-                          value={newCustomer.email || ''}
-                          onChange={e => setNewCustomer({...newCustomer, email: e.target.value})}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Endereço Sede</label>
-                      <Input 
-                        className="rounded-2xl py-6"
-                        value={newCustomer.address || ''}
-                        onChange={e => setNewCustomer({...newCustomer, address: e.target.value})}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={newCustomer.city || ''}
-                          onChange={e => setNewCustomer({...newCustomer, city: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF (Estado)</label>
-                        <Input 
-                          maxLength={2}
-                          className="rounded-2xl py-6 uppercase"
-                          value={newCustomer.state || ''}
-                          onChange={e => setNewCustomer({...newCustomer, state: e.target.value.toUpperCase()})}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cor do Identificador no Mapa</label>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {MAP_COLORS.map(c => (
-                          <button
-                            key={`new-customer-color-${c.value}`}
-                            type="button"
-                            onClick={() => setNewCustomer({...newCustomer, color: c.value})}
-                            className={cn(
-                              "w-8 h-8 rounded-full border-2 transition-all hover:scale-110 shadow-sm",
-                              newCustomer.color === c.value ? "border-brand-accent scale-110" : "border-transparent"
-                            )}
-                            style={{ backgroundColor: c.value }}
-                            title={c.name}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 pt-4">
-                      <button 
-                        type="button"
-                        onClick={() => setShowCustomerModal(false)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all"
-                      >
-                        Cancelar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
-                      >
-                        Finalizar Cadastro
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
-              {showEditPointModal && (
-                <>
-                  <div className="flex items-center justify-between mb-8">
-                    <div>
-                      <h3 className="text-2xl font-extrabold text-neutral-text font-display">Editar Ponto Operacional</h3>
-                      <p className="text-[10px] font-bold text-neutral-muted uppercase tracking-widest mt-1">Atualize os parâmetros técnicos e comerciais</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-2xl bg-brand-accent/10 flex items-center justify-center text-brand-accent border border-brand-accent/20">
-                      <MapPin size={24} />
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleUpdatePoint}>
-                    <div className="space-y-6 p-10 saas-scrollbar overflow-y-auto max-h-[60vh] rounded-3xl">
-                      <div>
-                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Vincular Cliente</label>
-                        <Select 
-                          value={showEditPointModal.customer_id} 
-                          onValueChange={(id) => {
-                            const c = customers.find(cust => cust.id === id);
-                            setShowEditPointModal({...showEditPointModal, customer_id: id, customer_name: c?.name || showEditPointModal.customer_name})
-                          }}
-                        >
-                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
-                            <SelectValue placeholder="Selecione o Cliente...">
-                              {customers.find(c => c.id === showEditPointModal.customer_id)?.name || showEditPointModal.customer_name || 'Nenhum Cliente'}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
-                            {customers.map((c, sIdx) => (
-                              <SelectItem key={`edit-pt-cust-sel-${c.id}-${sIdx}`} value={c.id} className="font-bold">{c.name}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-6">
-                        <div>
-                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Nome de Referência</label>
-                          <Input 
-                            required
-                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                            value={showEditPointModal.customer_name}
-                            onChange={e => setShowEditPointModal({...showEditPointModal, customer_name: e.target.value})}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Parceiro Responsável</label>
-                          <Select 
-                            value={showEditPointModal.partner_id} 
-                            onValueChange={(id) => {
-                              const p = partners.find(part => part.id === id);
-                              setShowEditPointModal({...showEditPointModal, partner_id: id, partner_name: p?.name || 'Aguardando'})
-                            }}
-                          >
-                            <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
-                              <SelectValue placeholder="Selecione o Parceiro...">
-                                {partners.find(p => p.id === showEditPointModal.partner_id)?.name}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
-                              {partners.map((p, pIdx) => (
-                                <SelectItem key={`partner-${p.id}-${pIdx}`} value={p.id} className="font-bold">{p.name}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Endereço de Instalação</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                          value={showEditPointModal.address}
-                          onChange={e => setShowEditPointModal({...showEditPointModal, address: e.target.value})}
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-6">
-                         <div className="col-span-2">
-                            <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cidade</label>
-                            <Input 
-                              className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                              value={showEditPointModal.city}
-                              onChange={e => setShowEditPointModal({...showEditPointModal, city: e.target.value})}
-                            />
-                         </div>
-                         <div>
-                            <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">UF</label>
-                            <Input 
-                              maxLength={2}
-                              className="rounded-2xl py-6 uppercase bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                              value={showEditPointModal.state}
-                              onChange={e => setShowEditPointModal({...showEditPointModal, state: e.target.value.toUpperCase()})}
-                            />
-                         </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-6">
-                        <div>
-                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Receita (Venda R$)</label>
-                          <Input 
-                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                            placeholder="R$ 0,00"
-                            value={formatCurrency(showEditPointModal.revenue)}
-                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, revenue: val}))}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Despesa (Custo R$)</label>
-                          <Input 
-                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
-                            placeholder="R$ 0,00"
-                            value={formatCurrency(showEditPointModal.expense)}
-                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, expense: val}))}
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Status Operacional</label>
-                        <Select 
-                          value={showEditPointModal.status} 
-                          onValueChange={(val: any) => setShowEditPointModal({...showEditPointModal, status: val})}
-                        >
-                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
-                            <SelectValue placeholder="Status...">
-                              {showEditPointModal.status === 'pending' ? 'Pendente' : 
-                               showEditPointModal.status === 'completed' ? 'Ativo / Concluído' : 
-                               showEditPointModal.status === 'cancelled' ? 'Cancelado / Inativo' : ''}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
-                            <SelectItem key="edit-point-status-pending" value="pending" className="font-bold text-amber-500">Pendente</SelectItem>
-                            <SelectItem key="edit-point-status-completed" value="completed" className="font-bold text-emerald-500">Ativo / Concluído</SelectItem>
-                            <SelectItem key="edit-point-status-cancelled" value="cancelled" className="font-bold text-rose-500">Cancelado / Inativo</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 p-10 border-t border-neutral-border dark:border-white/5 bg-neutral-bg/30 rounded-b-[2rem]">
-                      <button 
-                        type="button"
-                        onClick={() => setShowEditPointModal(null)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-black uppercase tracking-widest text-[10px] hover:bg-white dark:hover:bg-neutral-800 transition-all"
-                      >
-                        Descartar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all active:scale-95"
-                      >
-                        Salvar Alterações
-                      </button>
-                    </div>
-                  </form>
-                </>
-              )}
-
-              {showEditCustomerModal && (
-                <>
-                  <div className="flex items-center justify-between mb-8">
-                    <div>
-                      <h3 className="text-2xl font-extrabold text-neutral-text font-display">Editar Dados do Cliente</h3>
-                      <p className="text-[10px] font-bold text-neutral-muted uppercase tracking-widest mt-1">Atualize as informações cadastrais</p>
-                    </div>
-                    <div className="w-12 h-12 rounded-2xl bg-brand-accent/10 flex items-center justify-center text-brand-accent border border-brand-accent/20">
-                      <Users size={24} />
-                    </div>
-                  </div>
-
-                  <form onSubmit={handleUpdateCustomer} className="space-y-5">
-                    <div className="grid grid-cols-2 gap-5">
-                      <div className="col-span-2">
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Razão Social / Nome Fantasia</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          value={showEditCustomerModal.name}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, name: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">CNPJ</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="00.000.000/0000-00"
-                          value={showEditCustomerModal.cnpj || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, cnpj: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Responsável / Contato</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={showEditCustomerModal.contact || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, contact: e.target.value})}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Telefone / WhatsApp</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={showEditCustomerModal.phone || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, phone: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">E-mail para Faturamento</label>
-                        <Input 
-                          type="email"
-                          className="rounded-2xl py-6"
-                          value={showEditCustomerModal.email || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, email: e.target.value})}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Endereço Sede</label>
-                      <Input 
-                        className="rounded-2xl py-6"
-                        value={showEditCustomerModal.address || ''}
-                        onChange={e => setShowEditCustomerModal({...showEditCustomerModal, address: e.target.value})}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          value={showEditCustomerModal.city || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, city: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF (Estado)</label>
-                        <Input 
-                          maxLength={2}
-                          className="rounded-2xl py-6 uppercase"
-                          value={showEditCustomerModal.state || ''}
-                          onChange={e => setShowEditCustomerModal({...showEditCustomerModal, state: e.target.value.toUpperCase()})}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cor do Identificador no Mapa</label>
-                      <div className="flex flex-wrap gap-2 mb-4">
-                        {MAP_COLORS.map(c => (
-                          <button
-                            key={`edit-customer-color-${c.value}`}
-                            type="button"
-                            onClick={() => setShowEditCustomerModal({...showEditCustomerModal, color: c.value})}
-                            className={cn(
-                              "w-8 h-8 rounded-full border-2 transition-all hover:scale-110 shadow-sm",
-                              showEditCustomerModal.color === c.value ? "border-brand-accent scale-110" : "border-transparent"
-                            )}
-                            style={{ backgroundColor: c.value }}
-                            title={c.name}
-                          />
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex gap-4 pt-4">
-                      <button 
-                        type="button"
-                        onClick={() => setShowEditCustomerModal(null)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all font-display uppercase tracking-widest text-xs"
-                      >
-                        Cancelar
-                      </button>
-                      <button 
-                        type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all font-display uppercase tracking-widest text-xs"
-                      >
-                        Aplicar Alterações
                       </button>
                     </div>
                   </form>
