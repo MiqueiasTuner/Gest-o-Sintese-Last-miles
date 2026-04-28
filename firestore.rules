@@ -46,8 +46,7 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() && 
-        (request.auth.token.email in ["miqueiasyout@gmail.com", "miqueiasyy@gmail.com"]) &&
-        (request.auth.token.email_verified == true || request.auth.token.email in ["miqueiasyout@gmail.com", "miqueiasyy@gmail.com"]);
+        (request.auth.token.email in ["miqueiasyout@gmail.com", "miqueiasyy@gmail.com", "mye@sintese.com"]);
     }
 
     function isValidEmail(email) {
@@ -82,8 +81,8 @@ service cloud.firestore {
              data.city is string && data.city.size() > 0 && data.city.size() <= 100 &&
              data.state is string && data.state.size() == 2 &&
              data.partner_id is string &&
-             data.revenue is number && data.revenue >= 0 &&
-             data.expense is number && data.expense >= 0 &&
+             data.revenue is number &&
+             data.expense is number &&
              data.status in ['pending', 'completed', 'cancelled'] &&
              (!('customer_id' in data) || data.customer_id is string) &&
              (!('partner_name' in data) || data.partner_name is string) &&
@@ -92,9 +91,9 @@ service cloud.firestore {
              (!('sla_status' in data) || data.sla_status in ['within', 'warning', 'breached']) &&
              (!('equipment' in data) || data.equipment is string) &&
              (!('bandwidth' in data) || data.bandwidth is string) &&
-             (!('lat' in data) || data.lat is number) &&
-             (!('lng' in data) || data.lng is number) &&
-             (!('created_at' in data) || data.created_at is timestamp);
+             (!('lat' in data) || (data.lat == null || data.lat is number)) &&
+             (!('lng' in data) || (data.lng == null || data.lng is number)) &&
+             (!('created_at' in data) || true);
     }
 
     // --- Customer Validation ---

@@ -39,7 +39,8 @@ import {
   Lock,
   Maximize2,
   Minimize2,
-  Edit2
+  Edit2,
+  Target
 } from 'lucide-react';
 import Papa from 'papaparse';
 import { 
@@ -61,7 +62,8 @@ import {
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { motion, AnimatePresence } from 'motion/react';
-import { importLibrary, setOptions } from '@googlemaps/js-api-loader';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import { Calendar as CalendarComponent } from "./components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
 import { Switch } from "./components/ui/switch";
@@ -211,22 +213,48 @@ interface MonthlyStat {
 }
 
 // --- Components ---
+const Logo = ({ size = 24, className = "" }: { size?: number, className?: string }) => (
+  <svg 
+    width={size} 
+    height={size} 
+    viewBox="0 0 100 100" 
+    className={cn("drop-shadow-sm", className)}
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <defs>
+      <linearGradient id="logoGrand" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style={{ stopColor: '#3274d9', stopOpacity: 1 }} />
+        <stop offset="100%" style={{ stopColor: '#f05a28', stopOpacity: 1 }} />
+      </linearGradient>
+    </defs>
+    <rect width="80" height="80" x="10" y="10" rx="20" fill="currentColor" className="text-white/5" />
+    <path 
+      d="M35 65 C35 65 35 55 50 55 C65 55 65 45 65 45 C65 35 50 35 50 35 C35 35 35 45 35 45" 
+      stroke="url(#logoGrand)" 
+      strokeWidth="10" 
+      strokeLinecap="round" 
+    />
+    <circle cx="35" cy="65" r="7" fill="#3274d9" />
+    <circle cx="65" cy="45" r="7" fill="#f05a28" />
+  </svg>
+);
 
 // --- Helpers ---
-const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+const MAPTILER_KEY = '7zjMNdzW3pwRsbOXOzQW';
 
 const ProgressBar = ({ progress, label, current, total }: { progress: number, label: string, current?: number, total?: number }) => (
   <div className="w-full space-y-2">
     <div className="flex justify-between items-end">
       <p className="text-[10px] font-black uppercase tracking-widest text-neutral-muted">{label}</p>
-      <p className="text-[10px] font-black text-brand-accent">{Math.round(progress)}% {current !== undefined && total !== undefined && ` (${current}/${total})`}</p>
+      <p className="text-[10px] font-black text-brand-primary">{Math.round(progress)}% {current !== undefined && total !== undefined && ` (${current}/${total})`}</p>
     </div>
     <div className="h-2 w-full bg-neutral-bg dark:bg-neutral-900 rounded-full overflow-hidden border border-neutral-border dark:border-neutral-800">
       <motion.div 
         initial={{ width: 0 }}
         animate={{ width: `${progress}%` }}
         transition={{ duration: 0.3 }}
-        className="h-full bg-brand-accent shadow-[0_0_12px_rgba(37,99,235,0.3)]"
+        className="h-full bg-brand-accent shadow-[0_0_12px_rgba(225,255,125,0.4)]"
       />
     </div>
   </div>
@@ -316,13 +344,14 @@ const MAP_COLORS = [
 
 const MapComponent = ({ 
   points, 
-  height = "400px", 
+  height = "100%", 
   onExpand, 
   onEditPoint, 
   refreshTrigger, 
   customers = [],
   partners = [],
-  showPartnerAreas = false 
+  showPartnerAreas = false,
+  centerOn
 }: { 
   points: Point[], 
   height?: string, 
@@ -331,234 +360,174 @@ const MapComponent = ({
   refreshTrigger?: any,
   customers?: Customer[],
   partners?: Partner[],
-  showPartnerAreas?: boolean
+  showPartnerAreas?: boolean,
+  centerOn?: { lat: number, lng: number }
 }) => {
-  const mapRef = useRef<HTMLDivElement>(null);
-  const [googleMap, setGoogleMap] = useState<google.maps.Map | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [mapStyle, setMapStyle] = useState<'streets' | 'satellite'>('streets');
-  const markersRef = useRef<google.maps.Marker[]>([]);
-  const circlesRef = useRef<google.maps.Circle[]>([]);
-  const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
+  const mapContainer = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const markersRef = useRef<maplibregl.Marker[]>([]);
+  const activePopupRef = useRef<maplibregl.Popup | null>(null);
 
   useEffect(() => {
-    setOptions({
-      key: GOOGLE_MAPS_API_KEY,
-      v: "weekly",
-      libraries: ["places", "geometry"]
+    if (!mapContainer.current) return;
+
+    if (mapRef.current) return; // Prevent double init
+
+    mapRef.current = new maplibregl.Map({
+      container: mapContainer.current,
+      style: `https://api.maptiler.com/maps/openstreetmap-dark/style.json?key=${MAPTILER_KEY}`,
+      center: [-47.9292, -15.7801],
+      zoom: 4,
+      attributionControl: false
     });
 
-    const initMap = async () => {
-      try {
-        const loadTimeout = setTimeout(() => {
-          if (!window.google || !window.google.maps) {
-            setLoadError('A API do Google Maps não pôde ser carregada. Verifique se o Billing (Faturamento) está habilitado em seu Google Cloud Console.');
-          }
-        }, 10000);
+    mapRef.current.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-        // Load libraries
-        await Promise.all([
-          importLibrary('maps'),
-          importLibrary('marker'),
-          importLibrary('geocoding'),
-          importLibrary('geometry')
-        ]);
-        
-        clearTimeout(loadTimeout);
-        const { Map } = await importLibrary('maps') as google.maps.MapsLibrary;
-        if (mapRef.current && !googleMap) {
-          const map = new Map(mapRef.current, {
-            center: { lat: -15.7801, lng: -47.9292 },
-            zoom: 4,
-            mapTypeId: mapStyle === 'streets' ? 'roadmap' : 'hybrid',
-            disableDefaultUI: false,
-            zoomControl: true,
-            streetViewControl: false,
-            fullscreenControl: false,
-          });
-          setGoogleMap(map);
-        }
-      } catch (err) {
-        console.error("Error loading Google Maps:", err);
+    mapRef.current.on('click', () => {
+      if (activePopupRef.current) {
+        activePopupRef.current.remove();
+        activePopupRef.current = null;
       }
-    };
+    });
 
-    initMap();
+    const map = mapRef.current;
+    
+    return () => {
+      map?.remove();
+      mapRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
-    if (googleMap) {
-      googleMap.setMapTypeId(mapStyle === 'streets' ? 'roadmap' : 'hybrid');
+    if (centerOn && mapRef.current) {
+      mapRef.current.flyTo({
+        center: [centerOn.lng, centerOn.lat],
+        zoom: 10,
+        duration: 3000
+      });
     }
-  }, [mapStyle, googleMap]);
+  }, [centerOn]);
 
   useEffect(() => {
-    if (!googleMap) return;
+    if (!mapRef.current) return;
 
     // Clear existing markers
-    markersRef.current.forEach(m => m.setMap(null));
+    markersRef.current.forEach(m => m.remove());
     markersRef.current = [];
-
-    const bounds = new google.maps.LatLngBounds();
-    let hasValidPoints = false;
+    if (activePopupRef.current) activePopupRef.current.remove();
 
     points.forEach(point => {
       if (point.lat && point.lng) {
         const customer = customers.find(c => c.id === point.customer_id);
-        const color = customer?.color || '#2563eb';
+        const color = customer?.color || '#3274d9';
         
-        const marker = new google.maps.Marker({
-          position: { lat: point.lat, lng: point.lng },
-          map: googleMap,
-          title: point.customer_name,
-          icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            fillColor: color,
-            fillOpacity: 1,
-            strokeColor: '#FFFFFF',
-            strokeWeight: 2,
-            scale: 8,
+        const el = document.createElement('div');
+        el.className = 'w-3.5 h-3.5 rounded-full border border-white/80 cursor-pointer shadow-lg hover:ring-4 hover:ring-white/20 transition-all z-10';
+        el.style.backgroundColor = color;
+        el.style.boxShadow = `0 0 10px ${color}80`;
+
+        const popup = new maplibregl.Popup({ 
+          offset: [0, -15], 
+          closeButton: false,
+          className: 'custom-map-popup',
+          anchor: 'bottom'
+        }).setHTML(`
+          <div class="px-3 py-2.5 bg-[#111217] border border-[#202226] rounded-xl text-xs shadow-2xl min-w-[180px] pointer-events-auto">
+            <div class="font-black uppercase tracking-widest text-[#f05a28] mb-1 font-display text-[10px] leading-tight">${point.customer_name}</div>
+            <div class="text-[#7b8087] text-[8px] font-black uppercase tracking-widest mb-1 opacity-70">Endereço de Instalação</div>
+            <div class="text-[#d8d9da] text-[9px] opacity-90 font-sans leading-tight mb-2">${point.address}</div>
+            <div class="text-[#d8d9da] text-[9px] opacity-40 font-sans mb-3">${point.city}, ${point.state}</div>
+            <button id="edit-pop-${point.id}" class="w-full py-2 bg-[#3274d9] text-white rounded-lg text-[9px] font-black uppercase tracking-widest hover:bg-[#4a8df2] transition-all shadow-lg active:scale-95">Editar Parâmetros</button>
+          </div>
+        `);
+
+        el.addEventListener('mouseenter', () => {
+          if (activePopupRef.current) activePopupRef.current.remove();
+          if (mapRef.current) {
+            popup.setLngLat([point.lng!, point.lat!]).addTo(mapRef.current);
+            activePopupRef.current = popup;
+            
+            setTimeout(() => {
+              const btn = document.getElementById(`edit-pop-${point.id}`);
+              if (btn && onEditPoint) {
+                btn.onclick = (e) => {
+                  e.stopPropagation();
+                  onEditPoint(point);
+                  popup.remove();
+                  activePopupRef.current = null;
+                };
+              }
+            }, 0);
           }
         });
 
-        marker.addListener('click', () => {
-          if (infoWindowRef.current) infoWindowRef.current.close();
-          
-          const contentString = `
-            <div style="padding: 12px; font-family: Inter, sans-serif; min-width: 200px; color: #1a1a1a;">
-              <h4 style="margin: 0 0 8px 0; font-weight: 900; font-size: 14px; text-transform: uppercase;">${point.customer_name}</h4>
-              <p style="margin: 0; font-size: 11px; color: #666;">${point.address}</p>
-              <p style="margin: 4px 0 0 0; font-size: 11px; color: #666;">${point.city}, ${point.state}</p>
-              <div style="margin-top: 12px; font-weight: 800; font-size: 10px; color: #2563eb; text-transform: uppercase;">Parceiro: ${point.partner_name || 'Aguardando'}</div>
-              <button id="edit-btn-${point.id}" style="margin-top: 12px; width: 100%; padding: 8px; background: #2563eb; color: white; border: none; border-radius: 8px; font-weight: 800; font-size: 10px; cursor: pointer; text-transform: uppercase;">Editar Ponto</button>
-            </div>
-          `;
-
-          const infoWindow = new google.maps.InfoWindow({ content: contentString });
-          infoWindow.open(googleMap, marker);
-          infoWindowRef.current = infoWindow;
-
-          google.maps.event.addListenerOnce(infoWindow, 'domready', () => {
-            const btn = document.getElementById(`edit-btn-${point.id}`);
-            if (btn && onEditPoint) {
-              btn.addEventListener('click', () => {
-                onEditPoint(point);
-                infoWindow.close();
-              });
-            }
-          });
+        // Click event - Open direct edit
+        el.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (onEditPoint) {
+            onEditPoint(point);
+            popup.remove();
+            activePopupRef.current = null;
+          }
         });
 
+        const marker = new maplibregl.Marker({ element: el })
+          .setLngLat([point.lng!, point.lat!])
+          .addTo(mapRef.current!);
+
         markersRef.current.push(marker);
-        bounds.extend({ lat: point.lat, lng: point.lng });
-        hasValidPoints = true;
       }
     });
 
-    if (hasValidPoints) {
-      googleMap.fitBounds(bounds);
-      if (points.length === 1) {
-        googleMap.setZoom(15);
-      }
-    }
-  }, [googleMap, points, customers, refreshTrigger]);
-
-  // Visualize Partner Service Areas
-  useEffect(() => {
-    if (!googleMap) return;
-
-    circlesRef.current.forEach(c => c.setMap(null));
-    circlesRef.current = [];
-
-    if (showPartnerAreas && partners.length > 0) {
-      const geocoder = new google.maps.Geocoder();
-      
-      partners.forEach(partner => {
-        if (!partner.cities || !partner.state) return;
-        
-        const partnerCities = partner.cities.split(',').map(c => c.trim());
-        partnerCities.forEach(city => {
-          geocoder.geocode({ address: `${city}, ${partner.state}, Brazil` }, (results, status) => {
-            if (status === 'OK' && results && results[0]) {
-              const circle = new google.maps.Circle({
-                map: googleMap,
-                center: results[0].geometry.location,
-                radius: 15000,
-                fillColor: '#2563eb',
-                fillOpacity: 0.1,
-                strokeColor: '#2563eb',
-                strokeWeight: 1,
-                strokeOpacity: 0.3,
-                clickable: false
-              });
-              circlesRef.current.push(circle);
-            }
-          });
+    if (points.length > 0 && mapRef.current && !centerOn) {
+        const bounds = new maplibregl.LngLatBounds();
+        points.forEach(p => {
+          if (p.lng && p.lat) bounds.extend([p.lng, p.lat]);
         });
-      });
+        if (!bounds.isEmpty()) {
+          mapRef.current.fitBounds(bounds, { padding: 50, maxZoom: 12, duration: 2000 });
+        }
     }
-  }, [googleMap, showPartnerAreas, partners]);
+  }, [points, customers, onEditPoint, refreshTrigger, showPartnerAreas, centerOn]);
 
   return (
     <div style={{ height }} className={cn(
-      "saas-card overflow-hidden relative z-0 group rounded-3xl",
+      "saas-card overflow-hidden relative z-0 group rounded-3xl min-h-[400px]",
       height === '100%' && "rounded-none shadow-none border-none saas-card-none"
     )}>
-      <div className="absolute top-4 left-4 z-[1001] flex gap-2">
-        <button 
-          onClick={() => setMapStyle('streets')}
-          className={cn(
-            "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg border",
-            mapStyle === 'streets' 
-              ? "bg-brand-accent text-white border-brand-accent/50" 
-              : "bg-white dark:bg-neutral-900 text-neutral-muted border-neutral-border dark:border-neutral-800"
-          )}
-        >
-          Ruas
-        </button>
-        <button 
-          onClick={() => setMapStyle('satellite')}
-          className={cn(
-            "px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg border",
-            mapStyle === 'satellite' 
-              ? "bg-brand-accent text-white border-brand-accent/50" 
-              : "bg-white dark:bg-neutral-900 text-neutral-muted border-neutral-border dark:border-neutral-800"
-          )}
-        >
-          Satélite
-        </button>
+      <div ref={mapContainer} className="h-full w-full" />
+      
+      {/* Grafana Overlay */}
+      <div className="absolute top-6 left-6 pointer-events-none flex flex-col gap-3">
+        <div className="bg-[#111217]/80 backdrop-blur-xl p-4 border border-white/5 rounded-2xl shadow-2xl pointer-events-auto">
+          <div className="flex items-center gap-3">
+             <div className="w-2 h-2 rounded-full bg-[#73bf69] animate-pulse" />
+             <span className="text-[10px] font-black uppercase tracking-[0.2em] text-[#d8d9da]">Operação em Tempo Real</span>
+          </div>
+        </div>
       </div>
+
+      <button 
+        onClick={() => {
+          if (mapRef.current && points.length > 0) {
+            const bounds = new maplibregl.LngLatBounds();
+            points.forEach(p => bounds.extend([p.lng!, p.lat!]));
+            mapRef.current.fitBounds(bounds, { padding: 50 });
+          }
+        }}
+        className="absolute bottom-6 left-6 flex items-center justify-center gap-2 px-5 py-3 bg-[#111217] rounded-2xl text-[11px] font-black uppercase tracking-widest text-[#7b8087] border border-white/5 shadow-2xl hover:text-white transition-all hover:scale-[1.02] active:scale-[0.98]"
+      >
+        <Target size={14} />
+        Resetar Visão
+      </button>
 
       {onExpand && (
         <button 
-          onClick={(e) => {
-            e.stopPropagation();
-            onExpand();
-          }}
-          className="absolute top-4 right-4 z-[1001] p-3 bg-white dark:bg-neutral-900 rounded-2xl shadow-xl border border-neutral-border dark:border-neutral-800 text-neutral-muted hover:text-brand-accent transition-all hover:scale-110 active:scale-95"
-          title="Expandir Mapa"
+          onClick={(e) => { e.stopPropagation(); onExpand(); }}
+          className="absolute top-6 right-6 p-4 bg-[#111217] text-[#d8d9da] rounded-2xl shadow-xl border border-white/5 hover:text-white hover:scale-110 active:scale-95 transition-all"
         >
           <Maximize2 size={20} />
         </button>
-      )}
-
-      <div ref={mapRef} className="h-full w-full" />
-      {loadError && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black/5 backdrop-blur-sm z-[1002] p-6 text-center">
-          <div className="bg-white dark:bg-neutral-900 p-8 rounded-[2rem] shadow-2xl border border-neutral-border dark:border-neutral-800 max-w-sm">
-            <div className="w-16 h-16 bg-rose-500/10 rounded-2xl flex items-center justify-center text-rose-500 mx-auto mb-6">
-              <AlertTriangle size={32} />
-            </div>
-            <p className="text-sm font-bold text-neutral-text dark:text-white uppercase tracking-widest mb-4">Erro no Mapa</p>
-            <p className="text-xs text-neutral-muted leading-relaxed mb-6">{loadError}</p>
-            <button 
-              onClick={() => window.location.reload()}
-              className="w-full py-3 bg-brand-accent text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-brand-hover transition-all"
-            >
-              Recarregar Sistema
-            </button>
-          </div>
-        </div>
       )}
     </div>
   );
@@ -730,6 +699,11 @@ const StatCard = ({ label, value, icon: Icon, trend, color }: { label: string, v
 // --- Main App ---
 
 export default function App() {
+  // Force Dark Mode on mount
+  useEffect(() => {
+    document.documentElement.classList.add('dark');
+  }, []);
+
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
   const [user, setUser] = useState<any>(null);
   const [loginEmail, setLoginEmail] = useState('');
@@ -823,6 +797,21 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeCustomerFilter, setActiveCustomerFilter] = useState<string | null>(null);
   const [showPartnerAreas, setShowPartnerAreas] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState('');
+
+  const dashboardSearchPoint = useMemo(() => {
+    if (!dashboardSearch || dashboardSearch.length < 3) return undefined;
+    const term = dashboardSearch.toLowerCase();
+    const match = points.find(p => 
+      p.address.toLowerCase().includes(term) || 
+      p.city.toLowerCase().includes(term) || 
+      p.customer_name.toLowerCase().includes(term)
+    );
+    if (match && match.lat && match.lng) {
+      return { lat: match.lat, lng: match.lng };
+    }
+    return undefined;
+  }, [dashboardSearch, points]);
 
   // Firebase Auth Listener
   useEffect(() => {
@@ -1914,8 +1903,8 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.8 }}
             >
-              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-2xl flex items-center justify-center mb-10 border border-white/20 shadow-2xl">
-                <Network size={48} className="text-white" />
+              <div className="w-20 h-20 bg-white/10 backdrop-blur-md rounded-3xl flex items-center justify-center mb-10 border border-white/20 shadow-2xl overflow-hidden group">
+                <Logo size={56} className="text-white group-hover:scale-110 transition-transform duration-500" />
               </div>
               <h1 className="text-6xl font-extrabold tracking-tight mb-6 leading-[1.1] font-display">
                 Sintese <br />
@@ -1952,8 +1941,8 @@ export default function App() {
             className="w-full max-w-md relative z-10"
           >
             <div className="lg:hidden flex flex-col items-center mb-12">
-              <div className="w-14 h-14 bg-brand-accent rounded-2xl flex items-center justify-center text-white shadow-xl mb-4">
-                <Network size={28} />
+              <div className="w-16 h-16 bg-neutral-900 rounded-2xl flex items-center justify-center shadow-xl mb-4">
+                <Logo size={40} />
               </div>
               <h1 className="text-2xl font-bold text-neutral-text tracking-tight font-display">Sintese Core</h1>
             </div>
@@ -2007,7 +1996,7 @@ export default function App() {
 
                 <button 
                   type="submit"
-                  className="w-full py-4 bg-brand-accent text-white rounded-full font-bold text-base hover:bg-brand-hover transition-all shadow-lg shadow-brand-accent/20 active:scale-[0.98] mt-4"
+                  className="w-full py-4 bg-brand-accent text-brand-deep rounded-full font-bold text-base hover:bg-brand-hover transition-all shadow-lg shadow-brand-accent/20 active:scale-[0.98] mt-4"
                 >
                   Acessar Painel
                 </button>
@@ -2047,23 +2036,21 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-bg text-neutral-text overflow-x-hidden font-sans selection:bg-brand-accent/30 relative">
+    <div className="min-h-screen bg-brand-deep text-neutral-text dark:text-neutral-100 overflow-x-hidden font-sans selection:bg-brand-accent/30 relative">
       {/* Floating Capsule Navbar */}
       <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[100] w-full max-w-4xl px-4">
         <div className="glass-capsule px-6 py-3 flex items-center justify-between liquid-glass">
           <div className="flex items-center gap-3 active:scale-95 transition-transform cursor-pointer group">
             <div className="relative group/logo">
-              <div className="w-11 h-11 bg-white dark:bg-slate-900 rounded-[1.25rem] flex items-center justify-center shadow-xl shadow-brand-accent/10 border border-neutral-border dark:border-white/5 transition-all duration-700 group-hover/logo:rotate-[15deg]">
-                <div className="w-8 h-8 bg-brand-accent rounded-xl flex items-center justify-center text-white shadow-lg shadow-brand-accent/30 transition-transform duration-500 group-hover/logo:scale-110">
-                  <Network size={18} strokeWidth={3} />
-                </div>
+              <div className="w-11 h-11 bg-white dark:bg-slate-900 rounded-[1.25rem] flex items-center justify-center shadow-xl shadow-brand-accent/10 border border-neutral-border dark:border-white/5 transition-all duration-700 group-hover/logo:rotate-[15deg] overflow-hidden">
+                <Logo size={32} />
               </div>
               <div className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 border-2 border-white dark:border-slate-900 rounded-full shadow-lg animate-pulse"></div>
-              <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-brand-accent/40 rounded-full blur-[2px] animate-bounce"></div>
+              <div className="absolute -bottom-1 -left-1 w-3 h-3 bg-brand-primary/40 rounded-full blur-[2px] animate-bounce"></div>
             </div>
             <div className="flex flex-col -space-y-1">
               <h1 className="text-[16px] font-black tracking-tighter text-neutral-text dark:text-white uppercase font-display leading-tight">
-                SINTESE <span className="text-brand-accent italic">CORE</span>
+                SINTESE <span className="text-brand-primary italic">CORE</span>
               </h1>
               <div className="flex items-center gap-1.5 opacity-60">
                 <div className="w-1.5 h-1.5 bg-brand-accent rounded-full animate-pulse"></div>
@@ -2075,43 +2062,43 @@ export default function App() {
           <nav className="hidden md:flex items-center gap-1">
             <button 
               onClick={() => setActiveTab('dashboard')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'dashboard' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'dashboard' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Dashboard
             </button>
             <button 
               onClick={() => setActiveTab('partners')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'partners' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'partners' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Parceiros
             </button>
             <button 
               onClick={() => setActiveTab('clients')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'clients' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'clients' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Clientes
             </button>
             <button 
               onClick={() => setActiveTab('points')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'points' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'points' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Pontos
             </button>
             <button 
               onClick={() => setActiveTab('reports')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'reports' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'reports' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Relatórios
             </button>
             <button 
               onClick={() => setActiveTab('finance')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'finance' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'finance' ? "bg-brand-accent text-brand-deep shadow-lg shadow-brand-accent/20" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Financeiro
             </button>
             <button 
               onClick={() => setActiveTab('feasibility')}
-              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'feasibility' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
+              className={cn("px-4 py-1.5 rounded-full text-xs font-semibold transition-all", activeTab === 'feasibility' ? "bg-brand-accent text-brand-deep" : "text-neutral-muted hover:text-neutral-text hover:bg-neutral-bg")}
             >
               Viabilidade
             </button>
@@ -2154,7 +2141,7 @@ export default function App() {
                   onClick={() => { setActiveTab(tab as any); setIsSidebarOpen(false); }}
                   className={cn(
                     "w-full text-left px-6 py-4 rounded-2xl text-lg font-bold capitalize transition-all",
-                    activeTab === tab ? "bg-brand-accent text-white shadow-xl shadow-brand-accent/20" : "text-neutral-text hover:bg-neutral-bg"
+                    activeTab === tab ? "bg-brand-accent text-brand-deep shadow-xl shadow-brand-accent/20" : "text-neutral-text hover:bg-neutral-bg"
                   )}
                 >
                   {tab === 'points' ? 'Pontos de Acesso' : 
@@ -2196,321 +2183,371 @@ export default function App() {
           </div>
         )}
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <header className={cn(
-            "flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12 pt-10",
-            activeTab === 'dashboard' ? "text-white" : "text-neutral-text"
-          )}>
-            <div>
-              <div className={cn(
-                "flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest mb-2",
-                activeTab === 'dashboard' ? "text-white/60" : "text-brand-accent"
-              )}>
-                <Activity size={12} className="animate-pulse" />
-                <span>Monitoramento de Rede Ativo</span>
+        <div className={cn(
+          "mx-auto transition-all duration-500",
+          (activeTab === 'dashboard' || activeTab === 'feasibility') ? "w-full max-w-none px-0" : "max-w-[1700px] px-4 sm:px-6 lg:px-8"
+        )}>
+          {activeTab !== 'dashboard' && activeTab !== 'feasibility' ? (
+            <header className={cn(
+              "flex flex-col md:flex-row justify-between items-start md:items-end gap-6 mb-12 pt-10",
+              activeTab === 'dashboard' ? "text-white" : "text-neutral-text"
+            )}>
+              <div>
+                <div className={cn(
+                  "flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest mb-2",
+                  activeTab === 'dashboard' ? "text-white/60" : "text-brand-accent"
+                )}>
+                  <Activity size={12} className="animate-pulse" />
+                  <span>Monitoramento de Rede Ativo</span>
+                </div>
+                <h2 className="text-4xl font-extrabold tracking-tight capitalize font-display">
+                  {activeTab === 'reports' ? 'Relatórios de Rede' : 
+                   activeTab === 'finance' ? 'Fluxo Financeiro' : 
+                   activeTab === 'dashboard' ? 'Painel de Controle' : 
+                   activeTab === 'partners' ? 'Gestão de Parceiros' :
+                   activeTab === 'points' ? 'Pontos & Clientes' : activeTab}
+                </h2>
               </div>
-              <h2 className="text-4xl font-extrabold tracking-tight capitalize font-display">
-                {activeTab === 'reports' ? 'Relatórios de Rede' : 
-                 activeTab === 'finance' ? 'Fluxo Financeiro' : 
-                 activeTab === 'dashboard' ? 'Painel de Controle' : 
-                 activeTab === 'partners' ? 'Gestão de Parceiros' :
-                 activeTab === 'points' ? 'Pontos & Clientes' : activeTab}
-              </h2>
-            </div>
 
-            <div className="flex flex-wrap gap-4 w-full md:w-auto items-end">
-              <DatePicker 
-                label="Início" 
-                value={dateRange.start} 
-                onChange={(val) => setDateRange(prev => ({ ...prev, start: val }))} 
-              />
-              <DatePicker 
-                label="Fim" 
-                value={dateRange.end} 
-                onChange={(val) => setDateRange(prev => ({ ...prev, end: val }))} 
-              />
-              
-              {(dateRange.start || dateRange.end) && (
-                <button 
-                  onClick={() => setDateRange({ start: '', end: '' })}
-                  className="btn-pill bg-rose-50 dark:bg-rose-500/10 text-rose-600 border border-rose-100 dark:border-rose-500/20 text-xs h-[42px]"
-                >
-                  Limpar
-                </button>
-              )}
-              {activeTab !== 'dashboard' && activeTab !== 'reports' && activeTab !== 'clients' && (
-                <>
-                  <div className="relative group flex-1 md:flex-none">
-                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-muted group-focus-within:text-brand-accent transition-colors" size={18} />
-                    <input 
-                      type="text"
-                      placeholder="Pesquisar..."
-                      className="pl-12 pr-6 py-3 bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 rounded-full outline-none focus:ring-2 focus:ring-brand-accent/20 focus:border-brand-accent w-full md:w-64 lg:w-80 transition-all text-sm placeholder:text-neutral-muted/50 text-neutral-text"
-                      value={searchTerm}
-                      onChange={e => setSearchTerm(e.target.value)}
-                    />
-                  </div>
+              <div className="flex flex-wrap gap-4 w-full md:w-auto items-end">
+                <DatePicker 
+                  label="Início" 
+                  value={dateRange.start} 
+                  onChange={(val) => setDateRange(prev => ({ ...prev, start: val }))} 
+                />
+                <DatePicker 
+                  label="Fim" 
+                  value={dateRange.end} 
+                  onChange={(val) => setDateRange(prev => ({ ...prev, end: val }))} 
+                />
+                
+                {(dateRange.start || dateRange.end) && (
                   <button 
-                    onClick={() => { closeAllModals(); if (activeTab === 'partners') setShowPartnerModal(true); else setShowPointModal(true); }}
-                    className="btn-pill btn-primary flex items-center justify-center gap-2"
+                    onClick={() => setDateRange({ start: '', end: '' })}
+                    className="btn-pill bg-rose-50 dark:bg-rose-500/10 text-rose-600 border border-rose-100 dark:border-rose-500/20 text-xs h-[42px]"
                   >
-                    <Plus size={20} />
-                    <span>Novo {activeTab === 'partners' ? 'Parceiro' : 'Ponto'}</span>
+                    Limpar
                   </button>
-                  {activeTab === 'points' && (
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={exportToCSV}
-                        className="btn-pill bg-white dark:bg-neutral-900 text-neutral-text border border-neutral-border dark:border-neutral-800 hover:bg-neutral-bg flex items-center justify-center gap-2 transition-all"
-                        title="Exportar CSV"
-                      >
-                        <Download size={20} />
-                        <span className="hidden lg:inline">CSV</span>
-                      </button>
-                      <button 
-                        onClick={exportToKML}
-                        className="btn-pill bg-brand-accent/10 text-brand-accent border border-brand-accent/20 hover:bg-brand-accent/20 flex items-center justify-center gap-2 transition-all"
-                        title="Exportar para Google Earth"
-                      >
-                        <Globe size={20} />
-                        <span className="hidden lg:inline">Exp. Google Earth</span>
-                      </button>
-                      
-                      <button 
-                        onClick={() => setShowImportModal(true)}
-                        className="btn-pill bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500/20 flex items-center justify-center gap-2 transition-all"
-                        title="Importar do Google Earth"
-                      >
-                        <Upload size={20} />
-                        <span className="hidden lg:inline">Imp. Google Earth</span>
-                      </button>
+                )}
+                {activeTab !== 'dashboard' && activeTab !== 'reports' && activeTab !== 'clients' && (
+                  <>
+                    <div className="relative group flex-1 md:flex-none">
+                      <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-muted group-focus-within:text-brand-accent transition-colors" size={18} />
+                      <input 
+                        type="text"
+                        placeholder="Pesquisar..."
+                        className="pl-12 pr-6 py-3 bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800 rounded-full outline-none focus:ring-2 focus:ring-brand-accent/20 focus:border-brand-accent w-full md:w-64 lg:w-80 transition-all text-sm placeholder:text-neutral-muted/50 text-neutral-text"
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                      />
                     </div>
-                  )}
-                </>
-              )}
-            </div>
-          </header>
+                    <button 
+                      onClick={() => { closeAllModals(); if (activeTab === 'partners') setShowPartnerModal(true); else setShowPointModal(true); }}
+                      className="btn-pill btn-primary flex items-center justify-center gap-2"
+                    >
+                      <Plus size={20} />
+                      <span>Novo {activeTab === 'partners' ? 'Parceiro' : 'Ponto'}</span>
+                    </button>
+                    {activeTab === 'points' && (
+                      <div className="flex gap-2">
+                        <button 
+                          onClick={exportToCSV}
+                          className="btn-pill bg-white dark:bg-neutral-900 text-neutral-text border border-neutral-border dark:border-neutral-800 hover:bg-neutral-bg flex items-center justify-center gap-2 transition-all"
+                          title="Exportar CSV"
+                        >
+                          <Download size={20} />
+                          <span className="hidden lg:inline">CSV</span>
+                        </button>
+                        <button 
+                          onClick={exportToKML}
+                          className="btn-pill bg-brand-accent/10 text-brand-accent border border-brand-accent/20 hover:bg-brand-accent/20 flex items-center justify-center gap-2 transition-all"
+                          title="Exportar para Google Earth"
+                        >
+                          <Globe size={20} />
+                          <span className="hidden lg:inline">Exp. Google Earth</span>
+                        </button>
+                        
+                        <button 
+                          onClick={() => setShowImportModal(true)}
+                          className="btn-pill bg-amber-500/10 text-amber-600 border border-amber-500/20 hover:bg-amber-500/20 flex items-center justify-center gap-2 transition-all"
+                          title="Importar do Google Earth"
+                        >
+                          <Upload size={20} />
+                          <span className="hidden lg:inline">Imp. Google Earth</span>
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </header>
+          ) : null}
 
         <AnimatePresence mode="wait">
           {activeTab === 'dashboard' && (
             <motion.div 
               key="dashboard"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="space-y-10"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="relative min-h-[calc(100vh-100px)] flex flex-col"
             >
-              {/* Stats Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 sm:gap-6">
-                <StatCard 
-                  label="Parceiros" 
-                  value={stats.totalPartners} 
-                  icon={Globe} 
-                  trend="+4%" 
-                  color="bg-brand-accent" 
-                />
-                <StatCard 
-                  label="Terminais Ativos" 
-                  value={stats.totalPoints} 
-                  icon={Layers} 
-                  trend="+18%" 
-                  color="bg-emerald-500" 
-                />
-                <StatCard 
-                  label="Receita Bruta" 
-                  value={`R$ ${stats.totalRevenue.toLocaleString('pt-BR')}`} 
-                  icon={TrendingUp} 
-                  trend="+12.4%" 
-                  color="bg-emerald-600" 
-                />
-                <StatCard 
-                  label="Despesa Operacional" 
-                  value={`R$ ${stats.totalExpense.toLocaleString('pt-BR')}`} 
-                  icon={ArrowDownCircle} 
-                  trend="-2.4%" 
-                  color="bg-rose-500" 
-                />
-                <StatCard 
-                  label="Lucro Líquido" 
-                  value={`R$ ${stats.totalProfit.toLocaleString('pt-BR')}`} 
-                  icon={DollarSign} 
-                  trend="+8.2%" 
-                  color="bg-brand-accent" 
-                />
+              <div className="absolute top-8 right-8 z-[1010] flex gap-4 pointer-events-none">
+                <div className="glass-pill px-6 py-4 flex flex-col items-end border border-white/20 shadow-2xl pointer-events-auto">
+                   <div className="flex items-center gap-3">
+                     <span className="text-[10px] font-black uppercase tracking-widest text-white/70">Rede Ativa</span>
+                     <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_10px_#10b981]" />
+                   </div>
+                   <span className="text-2xl font-black text-white">{stats.totalPoints} Nós</span>
+                </div>
               </div>
 
-              {/* Charts Section */}
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
-                <div className="space-y-6">
-                  <NetworkTopology />
-                  <div className="saas-card p-6 sm:p-8 liquid-glass">
-                      <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <div className="p-2 bg-brand-accent/10 rounded-lg text-brand-accent border border-brand-accent/20">
-                            <MapIcon size={20} />
-                          </div>
-                          Mapa de Cobertura Last-Mile
+              <div className="flex-1 relative overflow-hidden group">
+                  <div className="absolute top-8 left-8 z-[1010] p-8 bg-black/40 backdrop-blur-3xl border border-white/10 rounded-[2.5rem] shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] max-w-sm pointer-events-auto">
+                    <div className="flex items-center gap-5 mb-8">
+                      <div className="w-16 h-16 bg-brand-accent rounded-3xl flex items-center justify-center text-brand-deep shadow-2xl shadow-brand-accent/40 rotate-3">
+                        <MapIcon size={32} />
+                      </div>
+                      <div>
+                        <h4 className="text-[11px] font-black uppercase tracking-[0.2em] text-brand-primary mb-1">Network Intelligence</h4>
+                        <h3 className="text-3xl font-black text-white font-display tracking-tight leading-none">Visão Global</h3>
+                      </div>
+                    </div>
+                    
+                    <div className="space-y-6">
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                           <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Receita</p>
+                           <p className="text-lg font-bold text-emerald-400">R$ {stats.totalRevenue.toLocaleString()}</p>
                         </div>
-                        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 p-2 rounded-xl border border-neutral-border dark:border-white/5 shadow-sm">
-                          <span className="text-[9px] font-black uppercase tracking-widest text-neutral-muted px-1">Ver Áreas Parceiras</span>
-                          <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
+                        <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
+                           <p className="text-[9px] font-black text-white/40 uppercase tracking-widest mb-1">Lucro</p>
+                           <p className="text-lg font-bold text-brand-accent">R$ {stats.totalProfit.toLocaleString()}</p>
                         </div>
-                      </h3>
-                    <div className="h-[400px]">
-                      <MapComponent 
-                        points={points} 
-                        customers={customers}
-                        partners={partners}
-                        showPartnerAreas={showPartnerAreas}
-                        onExpand={() => { setExpandedMapPoints([]); setIsMapExpanded(true); }} 
-                        onEditPoint={(p) => setShowEditPointModal(p)}
+                      </div>
+
+                      <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
+                         <div className="flex flex-col">
+                           <span className="text-[11px] font-black text-white uppercase tracking-widest">Ray-Tracing</span>
+                           <span className="text-[9px] text-white/40 font-bold uppercase">Polígonos de Cobertura</span>
+                         </div>
+                         <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
+                      </div>
+
+                      <button 
+                        onClick={() => setActiveTab('points')}
+                        className="w-full py-4 bg-brand-accent hover:bg-brand-accent/90 text-white rounded-2xl font-black uppercase tracking-widest text-xs transition-all shadow-xl shadow-brand-accent/20 flex items-center justify-center gap-3"
+                      >
+                        <Plus size={18} />
+                        Gerenciar Nós da Rede
+                      </button>
+                    </div>
+                  </div>
+
+                  <MapComponent 
+                    points={points} 
+                    customers={customers}
+                    partners={partners}
+                    showPartnerAreas={showPartnerAreas}
+                    height="calc(100vh - 100px)"
+                    onExpand={() => { setExpandedMapPoints([]); setIsMapExpanded(true); }} 
+                    onEditPoint={(p) => setShowEditPointModal(p)}
+                    centerOn={dashboardSearchPoint}
+                  />
+
+                  {/* Floating Search Bar */}
+                  <div className="absolute top-8 left-1/2 -translate-x-1/2 z-[1010] w-full max-w-lg px-4 pointer-events-none">
+                    <motion.div 
+                      initial={{ y: -20, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      className="glass-pill px-2 py-2 flex items-center gap-2 border border-white/20 shadow-[0_32px_64px_-16px_rgba(0,0,0,0.5)] pointer-events-auto bg-[#111217]/80 backdrop-blur-2xl"
+                    >
+                      <div className="pl-4 text-brand-accent">
+                        <Search size={20} strokeWidth={2.5} />
+                      </div>
+                      <input 
+                        type="text"
+                        value={dashboardSearch}
+                        onChange={(e) => setDashboardSearch(e.target.value)}
+                        placeholder="Pesquisar cidade, endereço ou cliente..."
+                        className="flex-1 bg-transparent border-none text-white placeholder:text-white/30 text-sm font-medium focus:ring-0 py-2"
                       />
-                    </div>
+                      {dashboardSearch && (
+                        <button 
+                          onClick={() => setDashboardSearch('')}
+                          className="p-2 hover:bg-white/10 rounded-xl text-white/40 hover:text-white transition-all mr-1"
+                        >
+                          <X size={18} />
+                        </button>
+                      )}
+                    </motion.div>
                   </div>
-                </div>
-                <BrazilMap />
               </div>
 
-              <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
-                <div className="saas-card p-6 sm:p-8 liquid-glass">
-                  <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center gap-3">
-                    <div className="p-2 bg-brand-accent/10 rounded-lg text-brand-accent border border-brand-accent/20">
-                      <MapIcon size={20} />
+              {/* Charts & Ranking Section */}
+              <div className="px-4 sm:px-6 lg:px-8 space-y-10 py-10 bg-neutral-bg/50 dark:bg-neutral-900/50">
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 sm:gap-8">
+                  <div className="saas-card p-6 sm:p-8 bg-[#111217] border-white/10">
+                    <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center gap-3">
+                      <div className="p-2 bg-brand-accent/10 rounded-lg text-brand-accent border border-brand-accent/20">
+                        <MapIcon size={20} />
+                      </div>
+                      Distribuição Regional de Nós
+                    </h3>
+                    <div className="h-64 sm:h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={stats.pointsByState}>
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#ffffff08'} />
+                          <XAxis dataKey="state" axisLine={false} tickLine={false} tick={{ fill: '#7b8087', fontSize: 10, fontWeight: 800 }} />
+                          <YAxis axisLine={false} tickLine={false} tick={{ fill: '#7b8087', fontSize: 10, fontWeight: 800 }} />
+                          <Tooltip 
+                            cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                            contentStyle={{ 
+                              backgroundColor: '#111217', 
+                              borderRadius: '16px', 
+                              border: '1px solid rgba(255,255,255,0.1)', 
+                              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+                              color: '#d8d9da',
+                              fontSize: '11px',
+                              fontWeight: 'bold'
+                            }}
+                          />
+                          <Bar dataKey="count" fill="#3274d9" radius={[4, 4, 0, 0]} barSize={24}>
+                            {stats.pointsByState.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.count > 10 ? '#3274d9' : '#3274d990'} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
                     </div>
-                    Distribuição Regional de Nós
-                  </h3>
-                  <div className="h-64 sm:h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={stats.pointsByState}>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
-                        <XAxis dataKey="state" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
-                        <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
-                        <Tooltip 
-                          cursor={{ fill: '#f8fafc', opacity: 0.4 }}
-                          contentStyle={{ 
-                            backgroundColor: '#fff', 
-                            borderRadius: '12px', 
-                            border: '1px solid #e2e8f0', 
-                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: '#111827'
-                          }}
-                          itemStyle={{ color: '#111827' }}
-                        />
-                        <Bar dataKey="count" fill="#2563eb" radius={[6, 6, 0, 0]} barSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  </div>
+
+                  <div className="saas-card p-6 sm:p-8 bg-[#111217] border-white/10">
+                    <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center gap-3">
+                      <div className="p-2 bg-emerald-500/10 rounded-lg text-emerald-500 border border-emerald-500/20">
+                        <Globe size={20} />
+                      </div>
+                      Alocação de Recursos por Parceiro
+                    </h3>
+                    <div className="h-64 sm:h-80">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={partners.map(p => {
+                          const pPoints = points.filter(pt => pt.partner_id === p.id && pt.status !== 'cancelled');
+                          const pExpense = pPoints.reduce((acc, curr) => acc + (curr.expense || 0), 0);
+                          const pRevenue = pPoints.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
+                          return {
+                            name: p.name.split(' ')[0],
+                            expense: pExpense,
+                            revenue: pRevenue
+                          };
+                        }).sort((a, b) => b.expense - a.expense).slice(0, 6)}>
+                          <CartesianGrid strokeDasharray="3 3" stroke={'#ffffff08'} vertical={false} />
+                          <XAxis 
+                            dataKey="name" 
+                            stroke="#7b8087" 
+                            fontSize={10} 
+                            fontWeight="800" 
+                            tickLine={false} 
+                            axisLine={false} 
+                            dy={10}
+                          />
+                          <YAxis 
+                            stroke="#7b8087" 
+                            fontSize={10} 
+                            fontWeight="800" 
+                            tickLine={false} 
+                            axisLine={false} 
+                            tickFormatter={(value) => `R$${value >= 1000 ? (value/1000).toFixed(1)+'k' : value}`} 
+                          />
+                          <Tooltip 
+                            cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                            contentStyle={{ 
+                              backgroundColor: '#111217', 
+                              borderRadius: '16px', 
+                              border: '1px solid rgba(255,255,255,0.1)', 
+                              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                              color: '#d8d9da',
+                              fontSize: '11px',
+                              fontWeight: 'bold'
+                            }}
+                          />
+                          <Bar dataKey="revenue" name="Receita" fill="#73bf69" radius={[4, 4, 0, 0]} barSize={24} />
+                          <Bar dataKey="expense" name="Despesa" fill="#f2495c" radius={[4, 4, 0, 0]} barSize={24} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
                 </div>
 
-                <div className="saas-card p-6 sm:p-8 liquid-glass">
-                  <h3 className="text-xl font-bold text-neutral-text mb-8 flex items-center gap-3">
-                    <div className="p-2 bg-emerald-50 rounded-lg text-emerald-600 border border-emerald-500/20">
-                      <Globe size={20} />
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                  <div className="lg:col-span-1 saas-card overflow-hidden">
+                    <div className="p-6 sm:p-8 border-b border-neutral-border">
+                      <h3 className="text-xl font-bold text-neutral-text">Top Parceiros</h3>
+                      <p className="text-xs text-neutral-muted mt-1 uppercase tracking-widest font-bold">Por volume de pontos</p>
                     </div>
-                    Alocação de Recursos por Parceiro
-                  </h3>
-                  <div className="h-64 sm:h-80">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={partners.map(p => {
-                        const pPoints = points.filter(pt => pt.partner_id === p.id && pt.status !== 'cancelled');
-                        const pExpense = pPoints.reduce((acc, curr) => acc + (curr.expense || 0), 0);
-                        const pRevenue = pPoints.reduce((acc, curr) => acc + (curr.revenue || 0), 0);
-                        return {
-                          name: p.name.split(' ')[0],
-                          expense: pExpense,
-                          revenue: pRevenue
-                        };
-                      }).sort((a, b) => b.expense - a.expense).slice(0, 6)}>
-                        <CartesianGrid strokeDasharray="3 3" stroke={'#f1f5f9'} vertical={false} />
-                        <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} fontWeight="bold" tickLine={false} axisLine={false} />
-                        <YAxis stroke="#94a3b8" fontSize={10} fontWeight="bold" tickLine={false} axisLine={false} tickFormatter={(value) => `R$${value}`} />
-                        <Tooltip 
-                          contentStyle={{ 
-                            backgroundColor: '#fff', 
-                            borderRadius: '12px', 
-                            border: '1px solid #e2e8f0', 
-                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: '#111827'
-                          }}
-                          itemStyle={{ color: '#111827' }}
-                        />
-                        <Bar dataKey="revenue" name="Receita" fill="#10b981" radius={[6, 6, 0, 0]} barSize={20} />
-                        <Bar dataKey="expense" name="Despesa" fill="#ef4444" radius={[6, 6, 0, 0]} barSize={20} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                </div>
-              </div>
-
-              {/* Partner Ranking & Recent Activity */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1 saas-card overflow-hidden">
-                  <div className="p-6 sm:p-8 border-b border-neutral-border">
-                    <h3 className="text-xl font-bold text-neutral-text">Top Parceiros</h3>
-                    <p className="text-xs text-neutral-muted mt-1 uppercase tracking-widest font-bold">Por volume de pontos</p>
-                  </div>
-                  <div className="p-5 sm:p-6 space-y-6">
-                    {partners
-                      .map(p => ({
-                        ...p,
-                        pointCount: points.filter(pt => pt.partner_id === p.id && pt.status !== 'cancelled').length
-                      }))
-                      .sort((a, b) => b.pointCount - a.pointCount)
-                      .slice(0, 5)
-                      .map((p, idx) => (
-                        <div key={`top-partner-${p.id}-${idx}`} className="flex items-center justify-between gap-4">
-                          <div className="flex items-center gap-3 min-w-0">
-                            <span className="text-xs font-bold text-neutral-muted w-4 flex-shrink-0">{idx + 1}</span>
-                            <PartnerLogo name={p.name} url={p.logo_url} size="sm" />
-                            <span className="text-sm font-bold text-neutral-text truncate">{p.name}</span>
-                          </div>
-                          <div className="flex items-center gap-2 flex-shrink-0">
-                            <div className="hidden xs:block h-1.5 w-12 sm:w-16 bg-neutral-bg rounded-full overflow-hidden">
-                              <div 
-                                className="h-full bg-brand-accent" 
-                                style={{ width: `${(p.pointCount / (stats.totalPoints || 1)) * 100}%` }}
-                              />
+                    <div className="p-5 sm:p-6 space-y-6">
+                      {partners
+                        .map(p => ({
+                          ...p,
+                          pointCount: points.filter(pt => pt.partner_id === p.id && pt.status !== 'cancelled').length
+                        }))
+                        .sort((a, b) => b.pointCount - a.pointCount)
+                        .slice(0, 5)
+                        .map((p, idx) => (
+                          <div key={`top-partner-${p.id}-${idx}`} className="flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="text-xs font-bold text-neutral-muted w-4 flex-shrink-0">{idx + 1}</span>
+                              <PartnerLogo name={p.name} url={p.logo_url} size="sm" />
+                              <span className="text-sm font-bold text-neutral-text truncate">{p.name}</span>
                             </div>
-                            <span className="text-xs font-bold text-neutral-text">{p.pointCount}</span>
+                            <div className="flex items-center gap-2 flex-shrink-0">
+                              <div className="hidden xs:block h-1.5 w-12 sm:w-16 bg-neutral-bg rounded-full overflow-hidden">
+                                <div 
+                                  className="h-full bg-brand-accent" 
+                                  style={{ width: `${(p.pointCount / (stats.totalPoints || 1)) * 100}%` }}
+                                />
+                              </div>
+                              <span className="text-xs font-bold text-neutral-text">{p.pointCount}</span>
+                            </div>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+
+                  <div className="lg:col-span-2 saas-card overflow-hidden">
+                    <div className="p-6 sm:p-8 border-b border-neutral-border flex justify-between items-center">
+                      <h3 className="text-xl font-bold text-neutral-text">Atividade Recente</h3>
+                      <button onClick={() => setActiveTab('points')} className="text-brand-accent text-sm font-bold hover:underline transition-all">Ver todos</button>
+                    </div>
+                    <div className="divide-y divide-neutral-border">
+                      {points.slice(0, 5).map((point, pIdx) => (
+                        <div key={`recent-activity-${point.id}-${pIdx}`} className="p-4 sm:p-5 flex flex-col sm:row sm:items-center justify-between hover:bg-neutral-bg/50 transition-all group gap-3">
+                          <div className="flex items-center gap-4">
+                            <div className={cn(
+                              "w-10 h-10 rounded-xl flex items-center justify-center border border-neutral-border shadow-sm",
+                              point.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 
+                              point.status === 'pending' ? 'bg-amber-50 text-amber-600' : 
+                              point.status === 'cancelled' ? 'bg-rose-50 text-rose-600' : 'bg-brand-accent/10 text-brand-accent'
+                            )}>
+                              {point.status === 'completed' ? <CheckCircle2 size={20} /> : 
+                               point.status === 'pending' ? <Clock size={20} /> : 
+                               point.status === 'cancelled' ? <XCircle size={20} /> : <AlertCircle size={20} />}
+                            </div>
+                            <div>
+                              <p className="font-bold text-neutral-text text-base">{point.customer_name}</p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <PartnerLogo name={partners.find(p => p.id === point.partner_id)?.name || ''} url={partners.find(p => p.id === point.partner_id)?.logo_url} size="sm" />
+                                <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-wider">{point.partner_name}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-left sm:text-right pl-14 sm:pl-0">
+                            <p className="font-bold text-neutral-text">Venda: R$ {point.revenue?.toLocaleString('pt-BR') || 0}</p>
+                            <p className="text-[10px] text-neutral-muted font-bold">Custo: R$ {point.expense?.toLocaleString('pt-BR') || 0}</p>
                           </div>
                         </div>
                       ))}
-                  </div>
-                </div>
-
-                <div className="lg:col-span-2 saas-card overflow-hidden">
-                  <div className="p-6 sm:p-8 border-b border-neutral-border flex justify-between items-center">
-                    <h3 className="text-xl font-bold text-neutral-text">Atividade Recente</h3>
-                    <button onClick={() => setActiveTab('points')} className="text-brand-accent text-sm font-bold hover:underline transition-all">Ver todos</button>
-                  </div>
-                  <div className="divide-y divide-neutral-border">
-                    {points.slice(0, 5).map((point, pIdx) => (
-                      <div key={`recent-activity-${point.id}-${pIdx}`} className="p-4 sm:p-5 flex flex-col sm:row sm:items-center justify-between hover:bg-neutral-bg/50 transition-all group gap-3">
-                        <div className="flex items-center gap-4">
-                          <div className={cn(
-                            "w-10 h-10 rounded-xl flex items-center justify-center border border-neutral-border shadow-sm",
-                            point.status === 'completed' ? 'bg-emerald-50 text-emerald-600' : 
-                            point.status === 'pending' ? 'bg-amber-50 text-amber-600' : 
-                            point.status === 'cancelled' ? 'bg-rose-50 text-rose-600' : 'bg-brand-accent/10 text-brand-accent'
-                          )}>
-                            {point.status === 'completed' ? <CheckCircle2 size={20} /> : 
-                             point.status === 'pending' ? <Clock size={20} /> : 
-                             point.status === 'cancelled' ? <XCircle size={20} /> : <AlertCircle size={20} />}
-                          </div>
-                          <div>
-                            <p className="font-bold text-neutral-text text-base">{point.customer_name}</p>
-                            <div className="flex items-center gap-1.5 mt-0.5">
-                              <PartnerLogo name={partners.find(p => p.id === point.partner_id)?.name || ''} url={partners.find(p => p.id === point.partner_id)?.logo_url} size="sm" />
-                              <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-wider">{point.partner_name}</p>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="text-left sm:text-right pl-14 sm:pl-0">
-                          <p className="font-bold text-neutral-text">Venda: R$ {point.revenue?.toLocaleString('pt-BR') || 0}</p>
-                          <p className="text-[10px] text-neutral-muted font-bold">Custo: R$ {point.expense?.toLocaleString('pt-BR') || 0}</p>
-                        </div>
-                      </div>
-                    ))}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2555,24 +2592,24 @@ export default function App() {
                       <AreaChart data={monthlyStats}>
                         <defs>
                           <linearGradient id="colorCount" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="5%" stopColor="#10b981" stopOpacity={0.1}/>
-                            <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                            <stop offset="5%" stopColor="#73bf69" stopOpacity={0.2}/>
+                            <stop offset="95%" stopColor="#73bf69" stopOpacity={0}/>
                           </linearGradient>
                         </defs>
-                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#334155'} strokeOpacity={0.2} />
                         <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                         <Tooltip 
                           contentStyle={{ 
-                            backgroundColor: '#fff', 
+                            backgroundColor: '#111217', 
                             borderRadius: '12px', 
-                            border: '1px solid #e2e8f0', 
-                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                            color: '#111827'
+                            border: '1px solid #202226', 
+                            boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.5)',
+                            color: '#d8d9da'
                           }}
-                          itemStyle={{ color: '#111827' }}
+                          itemStyle={{ color: '#d8d9da' }}
                         />
-                        <Area type="monotone" dataKey="count" stroke="#10b981" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
+                          <Area type="monotone" dataKey="count" stroke="#73bf69" strokeWidth={3} fillOpacity={1} fill="url(#colorCount)" />
                       </AreaChart>
                     </ResponsiveContainer>
                   </div>
@@ -2588,22 +2625,22 @@ export default function App() {
                     <div className="h-80">
                       <ResponsiveContainer width="100%" height="100%">
                         <LineChart data={monthlyStats}>
-                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#f1f5f9'} />
+                          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={'#334155'} strokeOpacity={0.2} />
                           <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                           <YAxis axisLine={false} tickLine={false} tick={{ fill: '#94a3b8', fontSize: 12, fontWeight: 500 }} />
                           <Tooltip 
                             contentStyle={{ 
-                              backgroundColor: '#fff', 
+                              backgroundColor: '#1E293B', 
                               borderRadius: '12px', 
-                              border: '1px solid #e2e8f0', 
+                              border: '1px solid #334155', 
                               boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)',
-                              color: '#111827'
+                              color: '#F8FAFC'
                             }}
-                            itemStyle={{ color: '#111827' }}
+                            itemStyle={{ color: '#F8FAFC' }}
                           />
-                          <Line type="monotone" dataKey="total_revenue" name="Receita" stroke="#10b981" strokeWidth={4} dot={{ r: 6, fill: '#10b981', strokeWidth: 2, stroke: '#fff' }} />
-                          <Line type="monotone" dataKey="total_expense" name="Despesa" stroke="#f59e0b" strokeWidth={4} dot={{ r: 6, fill: '#f59e0b', strokeWidth: 2, stroke: '#fff' }} />
-                          <Line type="monotone" dataKey="profit" name="Lucro" stroke="#6366f1" strokeWidth={4} dot={{ r: 6, fill: '#6366f1', strokeWidth: 2, stroke: '#fff' }} />
+                          <Line type="monotone" dataKey="total_revenue" name="Receita" stroke="#3274d9" strokeWidth={4} dot={{ r: 6, fill: '#3274d9', strokeWidth: 2, stroke: '#111217' }} />
+                          <Line type="monotone" dataKey="total_expense" name="Despesa" stroke="#f2495c" strokeWidth={4} dot={{ r: 6, fill: '#f2495c', strokeWidth: 2, stroke: '#111217' }} />
+                          <Line type="monotone" dataKey="profit" name="Lucro" stroke="#73bf69" strokeWidth={4} dot={{ r: 6, fill: '#73bf69', strokeWidth: 2, stroke: '#111217' }} />
                         </LineChart>
                       </ResponsiveContainer>
                     </div>
@@ -2709,7 +2746,9 @@ export default function App() {
               exit={{ opacity: 0, x: -20 }}
               className="space-y-10"
             >
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 p-10 bg-white dark:bg-slate-900 rounded-[3rem] border border-neutral-border dark:border-white/5 shadow-2xl shadow-brand-accent/5">
+              {!activeCustomerFilter ? (
+                <>
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 p-10 bg-white dark:bg-slate-900 rounded-[3rem] border border-neutral-border dark:border-white/5 shadow-2xl shadow-brand-accent/5">
                 <div className="flex items-center gap-6">
                   <div className="w-16 h-16 rounded-[1.5rem] bg-brand-accent flex items-center justify-center text-white shadow-xl shadow-brand-accent/30">
                     <Users size={32} strokeWidth={2.5} />
@@ -2722,7 +2761,7 @@ export default function App() {
                 <div className="flex items-center gap-4 w-full md:w-auto">
                   <button 
                     onClick={() => { closeAllModals(); setShowCustomerModal(true); }}
-                    className="flex-1 md:flex-none flex items-center justify-center gap-3 px-10 py-4 bg-brand-accent text-white rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-brand-hover transition-all shadow-2xl shadow-brand-accent/30 active:scale-95"
+                    className="flex-1 md:flex-none flex items-center justify-center gap-3 px-10 py-4 bg-brand-accent text-brand-deep rounded-2xl text-[11px] font-black uppercase tracking-[0.2em] hover:bg-brand-hover transition-all shadow-2xl shadow-brand-accent/30 active:scale-95"
                   >
                     <Plus size={20} strokeWidth={3} />
                     Novo Cliente
@@ -2773,8 +2812,8 @@ export default function App() {
                               <td className="px-10 py-8">
                                 <div className="flex items-center gap-5">
                                   <div className={cn(
-                                    "w-14 h-14 rounded-2xl bg-brand-accent/5 dark:bg-brand-accent/10 border border-brand-accent/10 flex items-center justify-center text-brand-accent font-black text-2xl shadow-inner group-hover:scale-110 group-hover:bg-brand-accent group-hover:text-white transition-all duration-500",
-                                    isFiltered && "bg-brand-accent text-white scale-110"
+                                    "w-14 h-14 rounded-2xl bg-brand-primary/5 dark:bg-brand-primary/10 border border-brand-primary/10 flex items-center justify-center text-brand-primary font-black text-2xl shadow-inner group-hover:scale-110 group-hover:bg-brand-accent group-hover:text-brand-deep transition-all duration-500",
+                                    isFiltered && "bg-brand-accent text-brand-deep scale-110"
                                   )}>
                                     {customer.name.charAt(0)}
                                   </div>
@@ -2853,7 +2892,7 @@ export default function App() {
                 <div className="space-y-10">
                   <div className="saas-card p-10 bg-gradient-to-br from-slate-900 to-slate-950 text-white border-none shadow-2xl relative overflow-hidden dark:from-neutral-900 dark:to-neutral-950">
                     <div className="absolute -top-10 -right-10 w-40 h-40 bg-brand-accent/20 blur-[80px]" />
-                    <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-brand-accent/10 blur-[60px]" />
+                    <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-brand-primary/30 blur-[60px]" />
                     
                     <div className="relative z-10">
                       <div className="flex items-center gap-4 mb-8">
@@ -2891,28 +2930,110 @@ export default function App() {
                     </div>
                   </div>
 
-                    <div className="saas-card overflow-hidden h-[400px]">
-                      <div className="p-6 border-b border-neutral-border dark:border-white/5 bg-neutral-bg/50 dark:bg-neutral-900/50 flex justify-between items-center">
-                        <div>
-                          <h4 className="text-[10px] font-black uppercase tracking-widest text-neutral-muted">Mapa de Atendimento</h4>
+                    <div className="saas-card overflow-hidden h-[calc(100vh-280px)] mt-6 relative">
+                      <div className="absolute top-8 left-8 z-[1010] p-6 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-2xl border border-neutral-border dark:border-white/10 rounded-3xl shadow-2xl max-w-sm pointer-events-auto">
+                        <div className="flex items-center gap-4 mb-4">
+                          <div className="w-12 h-12 bg-brand-accent/10 rounded-2xl flex items-center justify-center text-brand-accent shadow-inner">
+                            <MapIcon size={24} />
+                          </div>
+                          <div>
+                            <h4 className="text-[10px] font-black uppercase tracking-widest text-neutral-muted mb-1">Visualização Geo-Estratégica</h4>
+                            <h3 className="text-xl font-bold text-neutral-text dark:text-white font-display">Mapa de Atendimento</h3>
+                          </div>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div className="flex items-center justify-between p-3 bg-neutral-bg/50 dark:bg-white/5 rounded-xl border border-neutral-border dark:border-white/5">
+                             <div className="flex flex-col">
+                               <span className="text-[10px] font-bold text-neutral-muted uppercase tracking-wider">Polígonos de Cobertura</span>
+                             </div>
+                             <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
+                          </div>
+
                           {activeCustomerFilter && (
-                            <p className="text-[9px] font-bold text-brand-accent uppercase mt-1">Filtrado: {customers.find(c => c.id === activeCustomerFilter)?.name}</p>
+                            <div className="p-3 bg-brand-accent/5 rounded-xl border border-brand-accent/20 flex items-center gap-3">
+                              <div className="w-2 h-2 rounded-full bg-brand-accent animate-pulse" />
+                              <span className="text-xs font-bold text-brand-accent uppercase tracking-widest">Foco: {customers.find(c => c.id === activeCustomerFilter)?.name}</span>
+                            </div>
                           )}
                         </div>
                       </div>
-                      <div className="h-full">
+
+                      <div className="h-full relative z-0">
                         <MapComponent 
                           points={activeCustomerFilter ? points.filter(p => p.customer_id === activeCustomerFilter || p.customer_name === customers.find(c => c.id === activeCustomerFilter)?.name) : points} 
                           customers={customers}
                           partners={partners}
                           showPartnerAreas={showPartnerAreas}
-                          height="100%"
                           onEditPoint={(p) => setShowEditPointModal(p)}
                         />
                       </div>
                     </div>
+                  </div>
                 </div>
-              </div>
+              </>
+            ) : (
+                <div className="relative h-[calc(100vh-160px)] overflow-hidden rounded-[3rem] border border-neutral-border dark:border-white/10 shadow-2xl">
+                  {/* Floating Header */}
+                  <div className="absolute top-8 left-8 right-8 z-[1010] flex justify-between items-center pointer-events-none">
+                    <div className="p-6 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-2xl border border-neutral-border dark:border-white/10 rounded-3xl shadow-2xl flex items-center gap-6 pointer-events-auto">
+                      <div className="w-14 h-14 bg-brand-accent rounded-2xl flex items-center justify-center text-brand-deep shadow-xl shadow-brand-accent/20">
+                        <Users size={28} strokeWidth={2.5} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-3">
+                          <h2 className="text-2xl font-black text-neutral-text dark:text-white uppercase tracking-tighter leading-none">
+                            {customers.find(c => c.id === activeCustomerFilter)?.name}
+                          </h2>
+                          <button 
+                            onClick={() => {
+                              const customer = customers.find(c => c.id === activeCustomerFilter);
+                              if (customer) setShowEditCustomerModal(customer);
+                            }}
+                            className="p-2 hover:bg-brand-accent/10 rounded-lg text-brand-accent transition-all uppercase font-black text-[10px]"
+                          >
+                            Editar
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-4 mt-2">
+                           <span className="text-[10px] font-black uppercase tracking-widest text-neutral-muted opacity-70">
+                             DOC: {customers.find(c => c.id === activeCustomerFilter)?.cnpj || 'PENDENTE'}
+                           </span>
+                           <div className="w-1.5 h-1.5 rounded-full bg-brand-accent" />
+                           <span className="text-[10px] font-black uppercase tracking-widest text-neutral-muted opacity-70">
+                             {points.filter(p => p.customer_id === activeCustomerFilter).length} Pontos Ativos
+                           </span>
+                        </div>
+                      </div>
+                      <div className="w-px h-10 bg-neutral-border dark:bg-white/10 mx-2" />
+                      <button 
+                        onClick={() => setActiveCustomerFilter(null)}
+                        className="px-6 py-3 bg-neutral-bg dark:bg-neutral-800 hover:bg-white dark:hover:bg-neutral-700 text-[10px] font-black uppercase tracking-widest text-neutral-muted hover:text-brand-accent rounded-2xl border border-neutral-border dark:border-white/5 transition-all shadow-sm"
+                      >
+                        Sair do Foco
+                      </button>
+                    </div>
+
+                    <div className="flex gap-4 pointer-events-auto">
+                      <div className="px-6 py-4 bg-white/90 dark:bg-neutral-900/90 backdrop-blur-2xl border border-neutral-border dark:border-white/10 rounded-3xl shadow-2xl flex items-center gap-4">
+                         <span className="text-[10px] font-black uppercase tracking-widest text-neutral-muted">Polígonos</span>
+                         <Switch checked={showPartnerAreas} onCheckedChange={setShowPartnerAreas} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="h-full relative z-0">
+                    <MapComponent 
+                      points={points.filter(p => p.customer_id === activeCustomerFilter || p.customer_name === customers.find(c => c.id === activeCustomerFilter)?.name)} 
+                      customers={customers}
+                      partners={partners}
+                      showPartnerAreas={showPartnerAreas}
+                      onEditPoint={(p) => setShowEditPointModal(p)}
+                      height="100%"
+                    />
+                  </div>
+                </div>
+              )}
             </motion.div>
           )}
           {activeTab === 'finance' && (
@@ -3016,28 +3137,28 @@ export default function App() {
                     <h3 className="text-xl font-bold text-neutral-text">Conciliação de Pagamentos</h3>
                     <p className="text-sm text-neutral-muted mt-1">Gerencie o status financeiro de cada entrega concluída.</p>
                   </div>
-                  <div className="flex bg-neutral-bg dark:bg-neutral-800 p-1 rounded-2xl border border-neutral-border dark:border-neutral-700">
+                  <div className="flex bg-neutral-bg dark:bg-brand-deep/50 p-1 rounded-2xl border border-neutral-border dark:border-white/10">
                     <button 
                       onClick={() => setFinanceValidationFilter('all')}
-                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'all' ? "bg-white dark:bg-neutral-900 text-neutral-text shadow-sm" : "text-neutral-muted hover:text-neutral-text")}
+                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'all' ? "bg-white dark:bg-brand-deep text-neutral-text dark:text-white shadow-sm" : "text-neutral-muted hover:text-neutral-text dark:hover:text-white")}
                     >
                       Todos
                     </button>
                     <button 
                       onClick={() => setFinanceValidationFilter('pending')}
-                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'pending' ? "bg-white dark:bg-neutral-900 text-brand-accent shadow-sm" : "text-neutral-muted hover:text-neutral-text")}
+                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'pending' ? "bg-white dark:bg-brand-deep text-brand-accent shadow-sm" : "text-neutral-muted hover:text-brand-accent")}
                     >
                       Pendentes
                     </button>
                     <button 
                       onClick={() => setFinanceValidationFilter('approved')}
-                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'approved' ? "bg-white dark:bg-neutral-900 text-emerald-600 shadow-sm" : "text-neutral-muted hover:text-neutral-text")}
+                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'approved' ? "bg-white dark:bg-brand-deep text-brand-primary shadow-sm" : "text-neutral-muted hover:text-brand-primary")}
                     >
                       Aprovados
                     </button>
                     <button 
                       onClick={() => setFinanceValidationFilter('rejected')}
-                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'rejected' ? "bg-white dark:bg-neutral-900 text-rose-600 shadow-sm" : "text-neutral-muted hover:text-neutral-text")}
+                      className={cn("px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all", financeValidationFilter === 'rejected' ? "bg-white dark:bg-brand-deep text-rose-500 shadow-sm" : "text-neutral-muted hover:text-rose-500")}
                     >
                       Retidos
                     </button>
@@ -3128,123 +3249,151 @@ export default function App() {
           {activeTab === 'feasibility' && (
             <motion.div 
               key="feasibility"
-              initial={{ opacity: 0, x: 20 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -20 }}
-              className="space-y-8"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="relative h-[calc(100vh-100px)] flex"
             >
-              <div className="saas-card p-8">
-                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8">
-                  <div>
-                    <h3 className="text-2xl font-bold text-neutral-text">Consulta de Viabilidade</h3>
-                    <p className="text-neutral-muted text-sm mt-1">Localize parceiros Last-Mile por região para novos projetos.</p>
+              <div className="w-[450px] flex-shrink-0 bg-white dark:bg-neutral-900 border-r border-neutral-border dark:border-white/10 flex flex-col shadow-2xl z-10 overflow-hidden">
+                <div className="p-8 border-b border-neutral-border dark:border-white/5 bg-neutral-bg/30">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="p-3 bg-brand-accent/10 rounded-2xl text-brand-accent border border-brand-accent/20">
+                      <Search size={24} />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-neutral-text dark:text-white uppercase tracking-tighter">Viabilidade</h3>
+                      <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-widest leading-none">Localize parceiros estratégicos</p>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-4 w-full md:w-auto">
-                    <div className="flex-1 min-w-[200px]">
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade / Município</label>
+
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-2 ml-1">Município Target</label>
                       <Input 
                         placeholder="Ex: São Paulo"
                         value={feasibilitySearch.city}
                         onChange={e => setFeasibilitySearch(prev => ({ ...prev, city: e.target.value }))}
-                        className="rounded-xl py-5"
+                        className="rounded-2xl py-6 bg-white dark:bg-neutral-950 shadow-inner border-none ring-1 ring-neutral-border focus:ring-2 focus:ring-brand-accent/50 transition-all"
                       />
                     </div>
-                    <div className="w-full md:w-32">
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF</label>
+                    <div>
+                      <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-2 ml-1">UF</label>
                       <Input 
                         placeholder="Ex: SP"
                         maxLength={2}
                         value={feasibilitySearch.state}
                         onChange={e => setFeasibilitySearch(prev => ({ ...prev, state: e.target.value.toUpperCase() }))}
-                        className="rounded-xl py-5 uppercase"
+                        className="rounded-2xl py-6 bg-white dark:bg-neutral-950 shadow-inner border-none ring-1 ring-neutral-border focus:ring-2 focus:ring-brand-accent/50 transition-all uppercase"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                  <div className="lg:col-span-2 space-y-6">
-                    <div className="overflow-x-auto rounded-2xl border border-neutral-border dark:border-neutral-800">
-                      <table className="w-full text-left">
-                        <thead className="bg-neutral-bg dark:bg-neutral-900/50 border-b border-neutral-border dark:border-neutral-800">
-                          <tr>
-                            <th className="px-6 py-4 text-[10px] font-bold text-neutral-muted uppercase tracking-widest">Parceiro</th>
-                            <th className="px-6 py-4 text-[10px] font-bold text-neutral-muted uppercase tracking-widest">Cidades Atendidas</th>
-                            <th className="px-6 py-4 text-[10px] font-bold text-neutral-muted uppercase tracking-widest">Status</th>
-                            <th className="px-6 py-4 text-[10px] font-bold text-neutral-muted uppercase tracking-widest text-right">Ação</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-neutral-border dark:divide-neutral-800">
-                          {filteredPartnersForFeasibility.length > 0 ? (
-                            filteredPartnersForFeasibility.map((partner, pIdx) => (
-                              <tr key={`feasibility-partner-${partner.id}-${pIdx}`} className="hover:bg-neutral-bg/30 dark:hover:bg-neutral-900/30 transition-colors">
-                                <td className="px-6 py-4">
-                                  <div className="flex items-center gap-3">
-                                    <PartnerLogo name={partner.name} url={partner.logo_url} size="sm" />
-                                    <span className="font-bold text-neutral-text">{partner.name}</span>
-                                  </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className="text-xs text-neutral-muted line-clamp-1" title={partner.cities}>
-                                    {partner.cities}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4">
-                                  <span className={cn(
-                                    "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase",
-                                    partner.status === 'active' ? "bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-400" : "bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400"
-                                  )}>
-                                    {partner.status}
-                                  </span>
-                                </td>
-                                <td className="px-6 py-4 text-right">
-                                  <button 
-                                    onClick={() => {
-                                      closeAllModals();
-                                      setActiveTab('points');
-                                      setShowPointModal(true);
-                                      setNewPoint(prev => ({ ...prev, partner_id: partner.id, state: partner.state }));
-                                    }}
-                                    className="text-brand-accent hover:underline text-xs font-bold"
-                                  >
-                                    Vincular Projeto
-                                  </button>
-                                </td>
-                              </tr>
-                            ))
-                          ) : (
-                            <tr>
-                              <td colSpan={4} className="px-6 py-12 text-center text-neutral-muted italic text-sm">
-                                Nenhum parceiro encontrado para esta região.
-                              </td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                <div className="flex items-center justify-between text-[10px] font-black uppercase tracking-widest text-neutral-muted border-b border-neutral-border pb-4 mb-2">
+                  <span>Resultados Encontrados</span>
+                  <span className="text-brand-accent bg-brand-accent/10 px-2 py-0.5 rounded-full">{filteredPartnersForFeasibility.length}</span>
+                </div>
 
-                  <div className="space-y-6">
-                    <div className="saas-card p-6 bg-brand-accent/5 border-brand-accent/10">
-                      <h4 className="font-bold text-brand-accent mb-2 flex items-center gap-2">
-                        <Globe size={16} />
-                        Resumo de Cobertura
-                      </h4>
-                      <p className="text-xs text-neutral-muted leading-relaxed">
-                        Encontramos {filteredPartnersForFeasibility.length} parceiros que atendem a região de {feasibilitySearch.city || 'todo o Brasil'}.
-                      </p>
-                    </div>
-                    <MapComponent 
-                      points={points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id))} 
-                      customers={customers}
-                      partners={partners}
-                      showPartnerAreas={showPartnerAreas}
-                      height="300px" 
-                      onExpand={() => {
-                        setExpandedMapPoints(points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id)));
-                        setIsMapExpanded(true);
+                {filteredPartnersForFeasibility.length > 0 ? (
+                  filteredPartnersForFeasibility.map((partner, pIdx) => (
+                    <div 
+                      key={`feasibility-card-${partner.id}-${pIdx}`}
+                      onClick={() => {
+                        const partnerPoints = points.filter(p => p.partner_id === partner.id);
+                        if (partnerPoints.length > 0) {
+                          // Centering logic handled by centerOn prop in MapComponent
+                        }
                       }}
-                    />
+                      className="group relative p-5 bg-neutral-bg dark:bg-neutral-950 rounded-3xl border border-neutral-border dark:border-white/5 hover:border-brand-accent transition-all cursor-pointer shadow-sm hover:shadow-xl hover:scale-[1.02]"
+                    >
+                        <div className="flex items-start gap-4">
+                          <PartnerLogo name={partner.name} url={partner.logo_url} size="md" />
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-1">
+                               <h4 className="font-black text-neutral-text dark:text-white truncate text-base leading-none tracking-tight">{partner.name}</h4>
+                               <div className={cn(
+                                 "w-2 h-2 rounded-full",
+                                 partner.status === 'active' ? "bg-emerald-500" : "bg-rose-500"
+                               )} />
+                            </div>
+                            <p className="text-[10px] text-neutral-muted font-bold uppercase tracking-widest truncate">{partner.cities}</p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between pt-4 border-t border-neutral-border dark:border-white/5">
+                           <div className="flex flex-col">
+                             <span className="text-[9px] font-black text-neutral-muted uppercase tracking-widest">Base Focal</span>
+                             <span className="text-xs font-bold text-neutral-text">{partner.state} - Central</span>
+                           </div>
+                           <button 
+                             onClick={() => {
+                               closeAllModals();
+                               setActiveTab('points');
+                               setShowPointModal(true);
+                               setNewPoint(prev => ({ ...prev, partner_id: partner.id, state: partner.state }));
+                             }}
+                             className="px-4 py-2 bg-brand-accent/10 hover:bg-brand-accent text-brand-accent hover:text-white rounded-xl text-[10px] font-black uppercase tracking-widest transition-all"
+                           >
+                             Vincular
+                           </button>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 px-6 text-center">
+                       <MapPin size={48} className="text-neutral-muted/20 mb-4" />
+                       <p className="text-sm font-bold text-neutral-muted">Nenhum parceiro encontrado nesta região.</p>
+                       <p className="text-[10px] text-neutral-muted uppercase tracking-widest mt-2">Tente ajustar seus filtros de busca.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 relative overflow-hidden">
+                <MapComponent 
+                  points={points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id))} 
+                  customers={customers}
+                  partners={partners}
+                  showPartnerAreas={showPartnerAreas}
+                  height="100%"
+                  centerOn={(() => {
+                    if (feasibilitySearch.city) {
+                      const cityName = feasibilitySearch.city.toLowerCase();
+                      const cityPoints = points.filter(p => p.city.toLowerCase().includes(cityName));
+                      if (cityPoints.length > 0) {
+                        return { lat: cityPoints[0].lat!, lng: cityPoints[0].lng! };
+                      }
+                      const partnerWithCity = partners.find(p => p.cities.toLowerCase().includes(cityName));
+                      if (partnerWithCity) {
+                         const pp = points.find(pt => pt.partner_id === partnerWithCity.id);
+                         if (pp) return { lat: pp.lat!, lng: pp.lng! };
+                      }
+                    }
+                    return undefined;
+                  })()}
+                  onExpand={() => {
+                    setExpandedMapPoints(points.filter(p => filteredPartnersForFeasibility.some(part => part.id === p.partner_id)));
+                    setIsMapExpanded(true);
+                  }}
+                />
+                
+                {/* Floating Map Controls */}
+                <div className="absolute top-8 right-8 z-[1010] flex flex-col gap-4">
+                  <div className="glass-pill p-3 border border-white/20 shadow-2xl flex flex-col gap-3">
+                     <button className="w-10 h-10 bg-white/10 hover:bg-white text-white hover:text-brand-accent rounded-xl flex items-center justify-center transition-all">
+                       <Maximize2 size={20} />
+                     </button>
+                     <div className="w-full h-px bg-white/10" />
+                     <button 
+                       onClick={() => setShowPartnerAreas(!showPartnerAreas)}
+                       className={cn(
+                        "w-10 h-10 rounded-xl flex items-center justify-center transition-all border",
+                        showPartnerAreas ? "bg-brand-accent text-brand-deep border-brand-accent shadow-[0_0_15px_rgba(225,255,125,0.4)]" : "bg-white/10 text-white border-transparent hover:bg-white/20"
+                       )}
+                     >
+                       <Globe size={20} />
+                     </button>
                   </div>
                 </div>
               </div>
@@ -3265,7 +3414,7 @@ export default function App() {
                     onClick={() => setPartnerFilter('active')}
                     className={cn(
                       "px-6 py-2 rounded-full text-xs font-bold transition-all",
-                      partnerFilter === 'active' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text"
+                      partnerFilter === 'active' ? "bg-brand-accent text-brand-deep" : "text-neutral-muted hover:text-neutral-text"
                     )}
                   >
                     Ativos
@@ -3437,7 +3586,7 @@ export default function App() {
                     onClick={() => setPointFilter('active')}
                     className={cn(
                       "px-6 py-2 rounded-full text-xs font-bold transition-all",
-                      pointFilter === 'active' ? "bg-brand-accent text-white" : "text-neutral-muted hover:text-neutral-text"
+                      pointFilter === 'active' ? "bg-brand-accent text-brand-deep" : "text-neutral-muted hover:text-neutral-text"
                     )}
                   >
                     Ativos
@@ -3488,7 +3637,7 @@ export default function App() {
                     className={cn(
                       "flex items-center gap-2.5 px-6 py-2.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all shadow-sm",
                       selectedCustomerId 
-                        ? "bg-brand-accent text-white hover:bg-brand-accent/90" 
+                        ? "bg-brand-accent text-brand-deep hover:bg-brand-accent/90" 
                         : "bg-neutral-bg dark:bg-slate-900/50 border border-neutral-border dark:border-white/5 text-neutral-muted cursor-not-allowed opacity-50"
                     )}
                   >
@@ -3738,7 +3887,7 @@ export default function App() {
 
       {/* Modals */}
       <AnimatePresence>
-        {(showPartnerModal || showEditPartnerModal || showPointModal || showReductionModal || reportingIncidentPartnerId || showCustomerModal || showEditPointModal || showImportModal) && (
+        {(showPartnerModal || showEditPartnerModal || showPointModal || showReductionModal || reportingIncidentPartnerId || showCustomerModal || showEditPointModal || showImportModal || showEditCustomerModal) && (
           <motion.div 
             key="modal-overlay-wrapper"
             initial={{ opacity: 0 }}
@@ -3820,7 +3969,7 @@ export default function App() {
                               }
                               document.getElementById('kml-upload')?.click();
                             }}
-                            className="w-full px-6 py-4 rounded-2xl bg-brand-accent text-white font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all disabled:opacity-50"
+                            className="w-full px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-[0.2em] text-xs hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all disabled:opacity-50"
                           >
                             Selecionar Arquivos
                           </button>
@@ -3944,7 +4093,7 @@ export default function App() {
                       </button>
                       <button 
                         type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
                       >
                         Salvar Parceiro
                       </button>
@@ -4014,7 +4163,7 @@ export default function App() {
                       </button>
                       <button 
                         type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
                       >
                         Atualizar Dados
                       </button>
@@ -4197,7 +4346,7 @@ export default function App() {
                       </button>
                       <button 
                         type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
                       >
                         Salvar Ponto
                       </button>
@@ -4353,7 +4502,7 @@ export default function App() {
                       </button>
                       <button 
                         type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all"
                       >
                         Finalizar Cadastro
                       </button>
@@ -4374,145 +4523,147 @@ export default function App() {
                     </div>
                   </div>
 
-                  <form onSubmit={handleUpdatePoint} className="space-y-5">
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Vincular Cliente</label>
-                      <Select 
-                        value={showEditPointModal.customer_id} 
-                        onValueChange={(id) => {
-                          const c = customers.find(cust => cust.id === id);
-                          setShowEditPointModal({...showEditPointModal, customer_id: id, customer_name: c?.name || showEditPointModal.customer_name})
-                        }}
-                      >
-                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Selecione o Cliente...">
-                            {customers.find(c => c.id === showEditPointModal.customer_id)?.name || showEditPointModal.customer_name || 'Nenhum Cliente'}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          {customers.map((c, sIdx) => (
-                            <SelectItem key={`edit-pt-cust-sel-${c.id}-${sIdx}`} value={c.id}>{c.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
+                  <form onSubmit={handleUpdatePoint}>
+                    <div className="space-y-6 p-10 saas-scrollbar overflow-y-auto max-h-[60vh] rounded-3xl">
                       <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Nome de Referência</label>
-                        <Input 
-                          required
-                          className="rounded-2xl py-6"
-                          value={showEditPointModal.customer_name}
-                          onChange={e => setShowEditPointModal({...showEditPointModal, customer_name: e.target.value})}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Parceiro Responsável</label>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Vincular Cliente</label>
                         <Select 
-                          value={showEditPointModal.partner_id} 
+                          value={showEditPointModal.customer_id} 
                           onValueChange={(id) => {
-                            const p = partners.find(part => part.id === id);
-                            setShowEditPointModal({...showEditPointModal, partner_id: id, partner_name: p?.name || 'Aguardando'})
+                            const c = customers.find(cust => cust.id === id);
+                            setShowEditPointModal({...showEditPointModal, customer_id: id, customer_name: c?.name || showEditPointModal.customer_name})
                           }}
                         >
-                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border-neutral-border dark:border-neutral-800">
-                            <SelectValue placeholder="Selecione o Parceiro...">
-                              {partners.find(p => p.id === showEditPointModal.partner_id)?.name}
+                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
+                            <SelectValue placeholder="Selecione o Cliente...">
+                              {customers.find(c => c.id === showEditPointModal.customer_id)?.name || showEditPointModal.customer_name || 'Nenhum Cliente'}
                             </SelectValue>
                           </SelectTrigger>
-                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                            {partners.map((p, pIdx) => (
-                              <SelectItem key={`partner-${p.id}-${pIdx}`} value={p.id}>{p.name}</SelectItem>
+                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
+                            {customers.map((c, sIdx) => (
+                              <SelectItem key={`edit-pt-cust-sel-${c.id}-${sIdx}`} value={c.id} className="font-bold">{c.name}</SelectItem>
                             ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Nome de Referência</label>
+                          <Input 
+                            required
+                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                            value={showEditPointModal.customer_name}
+                            onChange={e => setShowEditPointModal({...showEditPointModal, customer_name: e.target.value})}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Parceiro Responsável</label>
+                          <Select 
+                            value={showEditPointModal.partner_id} 
+                            onValueChange={(id) => {
+                              const p = partners.find(part => part.id === id);
+                              setShowEditPointModal({...showEditPointModal, partner_id: id, partner_name: p?.name || 'Aguardando'})
+                            }}
+                          >
+                            <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
+                              <SelectValue placeholder="Selecione o Parceiro...">
+                                {partners.find(p => p.id === showEditPointModal.partner_id)?.name}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
+                              {partners.map((p, pIdx) => (
+                                <SelectItem key={`partner-${p.id}-${pIdx}`} value={p.id} className="font-bold">{p.name}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Endereço de Instalação</label>
+                        <Input 
+                          required
+                          className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                          value={showEditPointModal.address}
+                          onChange={e => setShowEditPointModal({...showEditPointModal, address: e.target.value})}
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-6">
+                         <div className="col-span-2">
+                            <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Cidade</label>
+                            <Input 
+                              className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                              value={showEditPointModal.city}
+                              onChange={e => setShowEditPointModal({...showEditPointModal, city: e.target.value})}
+                            />
+                         </div>
+                         <div>
+                            <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">UF</label>
+                            <Input 
+                              maxLength={2}
+                              className="rounded-2xl py-6 uppercase bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                              value={showEditPointModal.state}
+                              onChange={e => setShowEditPointModal({...showEditPointModal, state: e.target.value.toUpperCase()})}
+                            />
+                         </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Receita (Venda R$)</label>
+                          <Input 
+                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                            placeholder="R$ 0,00"
+                            value={formatCurrency(showEditPointModal.revenue)}
+                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, revenue: val}))}
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Despesa (Custo R$)</label>
+                          <Input 
+                            className="rounded-2xl py-6 bg-white dark:bg-neutral-950 border-neutral-border shadow-inner"
+                            placeholder="R$ 0,00"
+                            value={formatCurrency(showEditPointModal.expense)}
+                            onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, expense: val}))}
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-black text-neutral-muted uppercase tracking-[0.2em] mb-3 ml-1">Status Operacional</label>
+                        <Select 
+                          value={showEditPointModal.status} 
+                          onValueChange={(val: any) => setShowEditPointModal({...showEditPointModal, status: val})}
+                        >
+                          <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-inner ring-offset-background focus:ring-2 focus:ring-brand-accent/20">
+                            <SelectValue placeholder="Status...">
+                              {showEditPointModal.status === 'pending' ? 'Pendente' : 
+                               showEditPointModal.status === 'completed' ? 'Ativo / Concluído' : 
+                               showEditPointModal.status === 'cancelled' ? 'Cancelado / Inativo' : ''}
+                            </SelectValue>
+                          </SelectTrigger>
+                          <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800 shadow-2xl">
+                            <SelectItem key="edit-point-status-pending" value="pending" className="font-bold text-amber-500">Pendente</SelectItem>
+                            <SelectItem key="edit-point-status-completed" value="completed" className="font-bold text-emerald-500">Ativo / Concluído</SelectItem>
+                            <SelectItem key="edit-point-status-cancelled" value="cancelled" className="font-bold text-rose-500">Cancelado / Inativo</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                     </div>
 
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Endereço de Instalação</label>
-                      <Input 
-                        required
-                        className="rounded-2xl py-6"
-                        value={showEditPointModal.address}
-                        onChange={e => setShowEditPointModal({...showEditPointModal, address: e.target.value})}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-5">
-                       <div className="col-span-2">
-                          <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Cidade</label>
-                          <Input 
-                            className="rounded-2xl py-6"
-                            value={showEditPointModal.city}
-                            onChange={e => setShowEditPointModal({...showEditPointModal, city: e.target.value})}
-                          />
-                       </div>
-                       <div>
-                          <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">UF</label>
-                          <Input 
-                            maxLength={2}
-                            className="rounded-2xl py-6 uppercase"
-                            value={showEditPointModal.state}
-                            onChange={e => setShowEditPointModal({...showEditPointModal, state: e.target.value.toUpperCase()})}
-                          />
-                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-5">
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Receita (Venda R$)</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="R$ 0,00"
-                          value={formatCurrency(showEditPointModal.revenue)}
-                          onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, revenue: val}))}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Despesa (Custo R$)</label>
-                        <Input 
-                          className="rounded-2xl py-6"
-                          placeholder="R$ 0,00"
-                          value={formatCurrency(showEditPointModal.expense)}
-                          onChange={e => handleCurrencyInput(e.target.value, (val) => setShowEditPointModal({...showEditPointModal, expense: val}))}
-                        />
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-neutral-muted uppercase tracking-widest mb-2 ml-1">Status Operacional</label>
-                      <Select 
-                        value={showEditPointModal.status} 
-                        onValueChange={(val: any) => setShowEditPointModal({...showEditPointModal, status: val})}
-                      >
-                        <SelectTrigger className="w-full rounded-2xl py-6 h-auto bg-white dark:bg-neutral-900 border border-neutral-border dark:border-neutral-800">
-                          <SelectValue placeholder="Status...">
-                            {showEditPointModal.status === 'pending' ? 'Pendente' : 
-                             showEditPointModal.status === 'completed' ? 'Ativo / Concluído' : 
-                             showEditPointModal.status === 'cancelled' ? 'Cancelado / Inativo' : ''}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent className="bg-white dark:bg-neutral-950 border-neutral-border dark:border-neutral-800">
-                          <SelectItem key="edit-point-status-pending" value="pending">Pendente</SelectItem>
-                          <SelectItem key="edit-point-status-completed" value="completed">Ativo / Concluído</SelectItem>
-                          <SelectItem key="edit-point-status-cancelled" value="cancelled">Cancelado / Inativo</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="flex gap-4 pt-6">
+                    <div className="flex gap-4 p-10 border-t border-neutral-border dark:border-white/5 bg-neutral-bg/30 rounded-b-[2rem]">
                       <button 
                         type="button"
                         onClick={() => setShowEditPointModal(null)}
-                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-bold hover:bg-neutral-bg transition-all"
+                        className="flex-1 px-6 py-4 rounded-2xl border border-neutral-border text-neutral-muted font-black uppercase tracking-widest text-[10px] hover:bg-white dark:hover:bg-neutral-800 transition-all"
                       >
                         Descartar
                       </button>
                       <button 
                         type="submit"
-                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-white font-bold hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all font-display uppercase tracking-widest text-xs"
+                        className="flex-1 px-6 py-4 rounded-2xl bg-brand-accent text-brand-deep font-black uppercase tracking-widest text-[10px] hover:bg-brand-hover shadow-xl shadow-brand-accent/20 transition-all active:scale-95"
                       >
                         Salvar Alterações
                       </button>
